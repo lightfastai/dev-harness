@@ -2,10 +2,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
-const CONFIG_FILENAMES = ["portless-mfe.config.mjs", "portless-mfe.config.js"];
-const DEFAULT_CONFIG_FILENAME = "microfrontends.local.json";
+const CONFIG_FILENAMES = ["portless-mfe.config.json"];
+const RUNTIME_CONFIG_FILENAME = "microfrontends.local.json";
 const DEFAULT_APP_PORT_RANGE = { min: 5100, max: 8999 };
 const DEFAULT_PROXY_PORT_RANGE = { min: 9000, max: 9999 };
 const DEFAULT_PORTLESS_PORT = 1355;
@@ -110,10 +109,7 @@ export async function loadPortlessMfeConfig({ cwd = process.cwd(), configPath } 
 		);
 	}
 
-	const moduleUrl = pathToFileURL(resolvedPath);
-	moduleUrl.searchParams.set("mtime", String(fs.statSync(resolvedPath).mtimeMs));
-	const imported = await import(moduleUrl.href);
-	const rawConfig = imported.default ?? imported;
+	const rawConfig = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
 	return normalizePackageConfig(rawConfig, {
 		configPath: resolvedPath,
 		root: path.dirname(resolvedPath),
@@ -132,7 +128,7 @@ export function resolveTargetUrl({
 } = {}) {
 	const normalized = normalizePackageConfig(config ?? {}, { root: cwd });
 	const portlessName = name ?? normalized.portless.name;
-	const resolvedTargetPath = targetPath ?? normalized.target.path;
+	const resolvedTargetPath = targetPath ?? "/";
 
 	if (targetUrl) {
 		return targetUrl;
@@ -195,24 +191,19 @@ export async function createVercelMicrofrontendsDevConfig({
 	env = process.env,
 	config,
 	sourceConfigPath,
-	generatedConfigPath,
 	appDirs,
 	write = true,
-	linkPackageConfigs = true,
 	portAvailable = isPortAvailable,
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
 } = {}) {
 	const normalized = normalizePackageConfig(config ?? {}, { root: cwd });
-	const mfeConfigOptions = normalized.vercelMicrofrontends;
+	const mfeConfigOptions = normalized.microfrontends;
 	const sourcePath = path.resolve(
 		normalized.root,
-		sourceConfigPath ?? mfeConfigOptions.sourceConfig,
+		sourceConfigPath ?? mfeConfigOptions.config,
 	);
-	const generatedPath = path.resolve(
-		normalized.root,
-		generatedConfigPath ?? mfeConfigOptions.generatedConfig,
-	);
+	const generatedPath = path.join(path.dirname(sourcePath), RUNTIME_CONFIG_FILENAME);
 	const sourceConfig = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
 	const host = resolvePortlessHost({
 		name: normalized.portless.name,
@@ -232,7 +223,7 @@ export async function createVercelMicrofrontendsDevConfig({
 	const resolvedAppDirs = resolveApplicationDirectories({
 		root: normalized.root,
 		applications,
-		overrides: appDirs ?? mfeConfigOptions.appDirs,
+		overrides: appDirs ?? mfeConfigOptions.apps,
 	});
 	const appPorts = {};
 
@@ -271,14 +262,6 @@ export async function createVercelMicrofrontendsDevConfig({
 		const tmpPath = `${generatedPath}.tmp`;
 		fs.writeFileSync(tmpPath, `${JSON.stringify(generatedConfig, null, 2)}\n`);
 		fs.renameSync(tmpPath, generatedPath);
-
-		if (linkPackageConfigs) {
-			writePackageConfigLinks({
-				appDirs: resolvedAppDirs,
-				generatedPath,
-				filename: mfeConfigOptions.packageConfigFilename,
-			});
-		}
 	}
 
 	return {
@@ -290,14 +273,14 @@ export async function createVercelMicrofrontendsDevConfig({
 		generatedConfig,
 		sourceConfigPath: sourcePath,
 		generatedConfigPath: generatedPath,
-		packageConfigFilename: mfeConfigOptions.packageConfigFilename,
+		runtimeConfigFilename: RUNTIME_CONFIG_FILENAME,
+		localAppNames: Object.keys(applications),
 	};
 }
 
 export function normalizePackageConfig(rawConfig, { root = process.cwd(), configPath } = {}) {
 	const portless = rawConfig?.portless ?? {};
-	const target = rawConfig?.target ?? {};
-	const vcm = rawConfig?.vercelMicrofrontends ?? {};
+	const microfrontends = rawConfig?.microfrontends ?? {};
 
 	return {
 		root,
@@ -308,24 +291,37 @@ export function normalizePackageConfig(rawConfig, { root = process.cwd(), config
 			https: Boolean(portless.https),
 			tld: portless.tld ?? DEFAULT_PORTLESS_TLD,
 		},
-		target: {
-			path: target.path ?? "/",
-		},
-		vercelMicrofrontends: {
-			sourceConfig: vcm.sourceConfig ?? "microfrontends.json",
-			generatedConfig: vcm.generatedConfig ?? ".turbo/microfrontends.local.json",
-			packageConfigFilename: vcm.packageConfigFilename ?? DEFAULT_CONFIG_FILENAME,
-			appDirs: vcm.appDirs ?? {},
+		microfrontends: {
+			config: microfrontends.config ?? "microfrontends.json",
+			apps: microfrontends.apps ?? {},
 			appPortRange: {
-				min: parsePort(vcm.appPortRange?.min) ?? DEFAULT_APP_PORT_RANGE.min,
-				max: parsePort(vcm.appPortRange?.max) ?? DEFAULT_APP_PORT_RANGE.max,
+				min: parsePort(microfrontends.appPortRange?.min) ?? DEFAULT_APP_PORT_RANGE.min,
+				max: parsePort(microfrontends.appPortRange?.max) ?? DEFAULT_APP_PORT_RANGE.max,
 			},
 			proxyPortRange: {
-				min: parsePort(vcm.proxyPortRange?.min) ?? DEFAULT_PROXY_PORT_RANGE.min,
-				max: parsePort(vcm.proxyPortRange?.max) ?? DEFAULT_PROXY_PORT_RANGE.max,
+				min: parsePort(microfrontends.proxyPortRange?.min) ?? DEFAULT_PROXY_PORT_RANGE.min,
+				max: parsePort(microfrontends.proxyPortRange?.max) ?? DEFAULT_PROXY_PORT_RANGE.max,
 			},
 		},
 	};
+}
+
+export function selectLocalAppNames(applications, requestedApps = []) {
+	const allAppNames = Object.keys(applications ?? {});
+	const requested = requestedApps.filter(Boolean);
+
+	if (!requested.length) {
+		return allAppNames;
+	}
+
+	const unknownApps = requested.filter((appName) => !allAppNames.includes(appName));
+	if (unknownApps.length) {
+		throw new Error(
+			`Unknown local app(s): ${unknownApps.join(", ")}. Available apps: ${allAppNames.join(", ")}`,
+		);
+	}
+
+	return Array.from(new Set(requested));
 }
 
 export function resolvePortlessHost({
@@ -516,24 +512,6 @@ export function defaultGetPortlessUrl(name, { cwd = process.cwd(), env = process
 	}
 
 	return undefined;
-}
-
-function writePackageConfigLinks({ appDirs, generatedPath, filename }) {
-	for (const packageDir of Object.values(appDirs)) {
-		if (!fs.existsSync(packageDir)) {
-			continue;
-		}
-
-		const linkPath = path.join(packageDir, filename);
-		const relativeTarget = path.relative(packageDir, generatedPath);
-
-		try {
-			fs.rmSync(linkPath, { force: true });
-			fs.symlinkSync(relativeTarget, linkPath);
-		} catch {
-			fs.copyFileSync(generatedPath, linkPath);
-		}
-	}
 }
 
 function runWithFallbackCommands({ commands, cwd, env, runner, stdio }) {

@@ -8,6 +8,7 @@ import {
 	loadPortlessMfeConfig,
 	resolveRuntimeIdentity,
 	resolveTargetUrl,
+	selectLocalAppNames,
 	startPortlessProxy,
 } from "../src/index.js";
 
@@ -27,6 +28,9 @@ try {
 			break;
 		case "identity":
 			await handleIdentity(args);
+			break;
+		case "proxy":
+			await handleProxy(args);
 			break;
 		case "-h":
 		case "--help":
@@ -52,40 +56,87 @@ async function handleDev(args) {
 		cwd: process.cwd(),
 		configPath: options.config,
 	});
-	const result = await createVercelMicrofrontendsDevConfig({
+	let result = await createVercelMicrofrontendsDevConfig({
 		cwd: config.root,
 		config,
 		env: process.env,
 	});
+	if (options.proxyConfigPath) {
+		result = {
+			...result,
+			generatedConfigPath: path.resolve(process.cwd(), options.proxyConfigPath),
+		};
+	}
+	const localApps = selectLocalAppNames(
+		result.sourceConfig.applications,
+		readRequestedLocalApps(options),
+	);
 
 	console.log(
 		[
 			`MFE worktree host: ${result.host}`,
 			`MFE proxy port: ${result.localProxyPort}`,
 			`MFE generated config: ${path.relative(config.root, result.generatedConfigPath)}`,
+			`MFE local apps: ${localApps.join(", ")}`,
 			...Object.entries(result.appPorts).map(([appName, port]) => `${appName} port: ${port}`),
 		].join("\n"),
 	);
 
-	const child = spawn(commandArgs[0], commandArgs.slice(1), {
+	const childEnv = {
+		...process.env,
+		MFE_LOCAL_PROXY_PORT: String(result.localProxyPort),
+		PORTLESS_MFE_LOCAL_APPS: localApps.join(","),
+		VC_MICROFRONTENDS_CONFIG: result.generatedConfigPath,
+		VC_MICROFRONTENDS_CONFIG_FILE_NAME: result.runtimeConfigFilename,
+	};
+	const shouldStartProxy = !isTurboRunCommand(commandArgs);
+	const proxy = shouldStartProxy
+		? await startMicrofrontendsProxy({ config, result, localApps, env: childEnv })
+		: undefined;
+	const devCommandArgs = disableTurboFrameworkInference(commandArgs);
+	const child = spawn(devCommandArgs[0], devCommandArgs.slice(1), {
 		cwd: config.root,
-		env: {
-			...process.env,
-			MFE_LOCAL_PROXY_PORT: String(result.localProxyPort),
-			VC_MICROFRONTENDS_CONFIG_FILE_NAME: result.packageConfigFilename,
-		},
+		env: childEnv,
 		stdio: "inherit",
 	});
+	let shuttingDown = false;
+
+	const shutdown = (signal) => {
+		shuttingDown = true;
+		if (!child.killed) {
+			child.kill(signal);
+		}
+		if (proxy && !proxy.killed) {
+			proxy.kill(signal);
+		}
+	};
 
 	for (const signal of ["SIGINT", "SIGTERM"]) {
-		process.on(signal, () => {
-			if (!child.killed) {
-				child.kill(signal);
+		process.on(signal, () => shutdown(signal));
+	}
+
+	if (proxy) {
+		proxy.on("exit", (code, signal) => {
+			if (shuttingDown) {
+				return;
 			}
+
+			shuttingDown = true;
+			if (!child.killed) {
+				child.kill("SIGTERM");
+			}
+			if (signal) {
+				process.exit(signalExitCode(signal));
+			}
+			process.exit(code ?? 1);
 		});
 	}
 
 	child.on("exit", (code, signal) => {
+		shuttingDown = true;
+		if (proxy && !proxy.killed) {
+			proxy.kill("SIGTERM");
+		}
 		if (signal) {
 			process.exit(signalExitCode(signal));
 			return;
@@ -93,6 +144,89 @@ async function handleDev(args) {
 
 		process.exit(code ?? 0);
 	});
+}
+
+async function handleProxy(args) {
+	const { options } = parseProxyOptions(args);
+	const config = await loadPortlessMfeConfig({
+		cwd: process.cwd(),
+		configPath: options.config,
+	});
+	const result = await createVercelMicrofrontendsDevConfig({
+		cwd: config.root,
+		config,
+		env: process.env,
+	});
+	const localApps = selectLocalAppNames(
+		result.sourceConfig.applications,
+		readRequestedLocalApps(options),
+	);
+	const proxyEnv = {
+		...process.env,
+		MFE_LOCAL_PROXY_PORT: String(result.localProxyPort),
+		PORTLESS_MFE_LOCAL_APPS: localApps.join(","),
+		VC_MICROFRONTENDS_CONFIG: result.generatedConfigPath,
+		VC_MICROFRONTENDS_CONFIG_FILE_NAME: result.runtimeConfigFilename,
+	};
+	const proxy = await startMicrofrontendsProxy({
+		config,
+		result,
+		localApps,
+		env: proxyEnv,
+	});
+
+	for (const signal of ["SIGINT", "SIGTERM"]) {
+		process.on(signal, () => {
+			if (!proxy.killed) {
+				proxy.kill(signal);
+			}
+		});
+	}
+
+	proxy.on("exit", (code, signal) => {
+		if (signal) {
+			process.exit(signalExitCode(signal));
+			return;
+		}
+		process.exit(code ?? 0);
+	});
+}
+
+function parseProxyOptions(args) {
+	const options = { localApps: [] };
+
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+
+		switch (arg) {
+			case "--config":
+				options.config = readOptionValue(args, ++i, arg);
+				break;
+			case "--local-app":
+				options.localApps.push(readOptionValue(args, ++i, arg));
+				break;
+			case "--local-apps":
+			case "--names":
+				for (i++; i < args.length && !args[i].startsWith("--"); i++) {
+					options.localApps.push(args[i]);
+				}
+				i--;
+				break;
+			case "-h":
+			case "--help":
+				printHelp();
+				process.exit(0);
+				break;
+			default:
+				if (!arg.startsWith("--") && !options.proxyConfigPath) {
+					options.proxyConfigPath = arg;
+					break;
+				}
+				throw new Error(`Unknown option "${arg}".`);
+		}
+	}
+
+	return { options };
 }
 
 async function handleRun(args) {
@@ -126,6 +260,7 @@ async function handleRun(args) {
 			"portless-mfe",
 			"dev",
 			...(options.config ? ["--config", options.config] : []),
+			...options.localApps.flatMap((appName) => ["--local-app", appName]),
 			"--",
 			...commandArgs,
 		],
@@ -217,7 +352,7 @@ function parseCommandArgs(args) {
 }
 
 function parseOptions(args) {
-	const options = {};
+	const options = { localApps: [] };
 
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
@@ -238,6 +373,9 @@ function parseOptions(args) {
 			case "--app-name":
 				options.appName = readOptionValue(args, ++i, arg);
 				break;
+			case "--local-app":
+				options.localApps.push(readOptionValue(args, ++i, arg));
+				break;
 			case "--json":
 				options.json = true;
 				break;
@@ -252,6 +390,122 @@ function parseOptions(args) {
 	}
 
 	return { options };
+}
+
+function buildMicrofrontendsProxyArgs(result, localApps) {
+	return [
+		"proxy",
+		result.generatedConfigPath,
+		"--local-apps",
+		...localApps,
+		"--port",
+		String(result.localProxyPort),
+	];
+}
+
+function startMicrofrontendsProxy({ config, result, localApps, env }) {
+	return spawnWithFallback(
+		buildMicrofrontendsProxyCommands(result, localApps),
+		{
+			cwd: config.root,
+			env,
+			stdio: "inherit",
+		},
+	);
+}
+
+function buildMicrofrontendsProxyCommands(result, localApps) {
+	const args = buildMicrofrontendsProxyArgs(result, localApps);
+	const appDirs = unique([
+		...localApps.map((appName) => result.appDirs[appName]),
+		...Object.values(result.appDirs),
+	].filter(Boolean));
+	const commands = [];
+
+	for (const appDir of appDirs) {
+		commands.push([
+			path.join(appDir, "node_modules", ".bin", "microfrontends"),
+			args,
+			{ cwd: appDir },
+		]);
+		commands.push([
+			"pnpm",
+			["exec", "microfrontends", ...args],
+			{ cwd: appDir },
+		]);
+	}
+
+	commands.push(["microfrontends", args]);
+	commands.push(["pnpm", ["exec", "microfrontends", ...args]]);
+	return commands;
+}
+
+function disableTurboFrameworkInference(commandArgs) {
+	if (!commandArgs.length || !isTurboRunCommand(commandArgs)) {
+		return commandArgs;
+	}
+
+	if (commandArgs.some((arg) => arg === "--framework-inference" || arg.startsWith("--framework-inference="))) {
+		return commandArgs;
+	}
+
+	const runIndex = commandArgs.indexOf("run");
+	return [
+		...commandArgs.slice(0, runIndex + 1),
+		"--framework-inference=false",
+		...commandArgs.slice(runIndex + 1),
+	];
+}
+
+function isTurboRunCommand(commandArgs) {
+	const command = path.basename(commandArgs[0]);
+	if (command === "turbo" && commandArgs.includes("run")) {
+		return true;
+	}
+	return command === "pnpm" &&
+		commandArgs[1] === "exec" &&
+		commandArgs[2] === "turbo" &&
+		commandArgs.includes("run");
+}
+
+function readRequestedLocalApps(options) {
+	if (options.localApps.length) {
+		return options.localApps;
+	}
+
+	return (process.env.PORTLESS_MFE_LOCAL_APPS ?? "")
+		.split(",")
+		.map((appName) => appName.trim())
+		.filter(Boolean);
+}
+
+function spawnWithFallback(commands, options) {
+	return new Promise((resolve, reject) => {
+		const tryCommand = (index) => {
+			const [command, args, commandOptions = {}] = commands[index];
+			const child = spawn(command, args, { ...options, ...commandOptions });
+			let spawned = false;
+
+			child.once("spawn", () => {
+				spawned = true;
+				resolve(child);
+			});
+
+			child.once("error", (error) => {
+				if (!spawned && error.code === "ENOENT" && index + 1 < commands.length) {
+					tryCommand(index + 1);
+					return;
+				}
+				reject(error);
+			});
+		};
+
+		tryCommand(0);
+	});
+}
+
+function unique(values) {
+	return Array.from(new Set(values));
 }
 
 function readOptionValue(args, index, flag) {
@@ -275,14 +529,16 @@ function signalExitCode(signal) {
 
 function printHelp() {
 	console.log(`Usage:
-  portless-mfe dev -- <command> [...args]
-  portless-mfe run [--name <name>] -- <command> [...args]
+  portless-mfe dev [--local-app <name>] -- <command> [...args]
+  portless-mfe run [--name <name>] [--local-app <name>] -- <command> [...args]
+  portless-mfe proxy [--local-app <name>]
   portless-mfe url [--path <path>] [--json]
   portless-mfe identity [--path <path>] [--app-name <name>] [--json]
 
 Options:
-  --config <path>       Path to portless-mfe.config.mjs
+  --config <path>       Path to portless-mfe.config.json
   --name <name>         Portless base route name
+  --local-app <name>    Locally running Vercel Microfrontends application
   --path <path>         Target path to append to the Portless URL
   --target-url <url>    Explicit target URL override
   --app-name <name>     Runtime base app name for identity

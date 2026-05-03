@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port $(microfrontends port)",
+    "proxy": "portless-mfe proxy",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -12,6 +13,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@repo/portless-mfe-dev": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

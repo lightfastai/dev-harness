@@ -6,11 +6,11 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "portless-mfe run -- turbo run dev --ui=tui --filter=app --filter=www",
-    "dev:apps": "portless-mfe dev -- turbo run dev --ui=tui --filter=app --filter=www",
-    "dev:app": "portless-mfe dev -- pnpm --filter app dev",
+    "dev": "portless-mfe run --local-app app --local-app www -- turbo run dev --ui=tui --filter=app --filter=www",
+    "dev:apps": "portless-mfe dev --local-app app --local-app www -- turbo run dev --ui=tui --filter=app --filter=www",
+    "dev:app": "portless-mfe dev --local-app app -- pnpm --filter app dev",
     "dev:desktop": "pnpm --filter desktop dev",
-    "dev:www": "portless-mfe dev -- pnpm --filter www dev",
+    "dev:www": "portless-mfe dev --local-app www -- pnpm --filter www dev",
     "mfe:url": "portless-mfe url",
     "typecheck": "turbo run typecheck"
   },

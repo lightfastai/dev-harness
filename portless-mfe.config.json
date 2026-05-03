@@ -1,0 +1,12 @@
+{
+  "$schema": "./packages/portless-mfe-dev/schema/config.schema.json",
+  "portless": {
+    "name": "mfe",
+    "port": 1355,
+    "https": false
+  },
+  "microfrontends": {
+    "config": "apps/app/microfrontends.json",
+    "apps": {}
+  }
+}
