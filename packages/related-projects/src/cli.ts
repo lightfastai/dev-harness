@@ -645,7 +645,7 @@ async function startPortlessAppBridges({
 		}
 
 		const server = http.createServer((req, res) => {
-			proxyToPortlessApp({ appName, targetUrl, req, res });
+			proxyToPortlessApp({ appName, targetUrl, externalHost: result.host, req, res });
 		});
 		server.on("clientError", (_error, socket) => {
 			if (socket.writable) {
@@ -653,7 +653,7 @@ async function startPortlessAppBridges({
 			}
 		});
 		server.on("upgrade", (req, socket, head) => {
-			proxyUpgradeToPortlessApp({ targetUrl, req, socket, head });
+			proxyUpgradeToPortlessApp({ targetUrl, externalHost: result.host, req, socket, head });
 		});
 		await listen(server, port);
 		bridges.push({ appName, port, targetUrl, server, closed: false });
@@ -681,16 +681,22 @@ function listen(server: Server, port: number): Promise<void> {
 function proxyToPortlessApp({
 	appName,
 	targetUrl,
+	externalHost,
 	req,
 	res,
 }: {
 	appName: string;
 	targetUrl: string;
+	externalHost: string;
 	req: IncomingMessage;
 	res: ServerResponse;
 }): void {
 	const target = new URL(req.url ?? "/", targetUrl);
-	const headers = buildBridgeRequestHeaders(req.headers, target);
+	const headers = buildBridgeRequestHeaders(req.headers, target, {
+		forwardedHost: externalHost,
+		forwardedProto: target.protocol.replace(":", ""),
+		forwardedPort: target.port || (target.protocol === "https:" ? "443" : "80"),
+	});
 	const requestModule = target.protocol === "https:" ? https : http;
 	const proxyReq = requestModule.request(
 		{
@@ -737,11 +743,13 @@ function proxyToPortlessApp({
 
 function proxyUpgradeToPortlessApp({
 	targetUrl,
+	externalHost,
 	req,
 	socket,
 	head,
 }: {
 	targetUrl: string;
+	externalHost: string;
 	req: IncomingMessage;
 	socket: Duplex;
 	head: Buffer;
@@ -751,7 +759,11 @@ function proxyUpgradeToPortlessApp({
 	});
 
 	const target = new URL(req.url ?? "/", targetUrl);
-	const headers = buildBridgeRequestHeaders(req.headers, target);
+	const headers = buildBridgeRequestHeaders(req.headers, target, {
+		forwardedHost: externalHost,
+		forwardedProto: target.protocol.replace(":", ""),
+		forwardedPort: target.port || (target.protocol === "https:" ? "443" : "80"),
+	});
 	const requestModule = target.protocol === "https:" ? https : http;
 	const proxyReq = requestModule.request({
 		protocol: target.protocol,

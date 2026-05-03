@@ -2,9 +2,16 @@ import type { IncomingHttpHeaders } from "node:http";
 
 export type BridgeRequestHeaders = Record<string, string | string[]>;
 
+export interface BuildBridgeRequestHeadersOptions {
+	forwardedHost?: string;
+	forwardedProto?: string;
+	forwardedPort?: string | number;
+}
+
 export function buildBridgeRequestHeaders(
 	sourceHeaders: IncomingHttpHeaders,
 	target: URL,
+	options: BuildBridgeRequestHeadersOptions = {},
 ): BridgeRequestHeaders {
 	const headers = stripHopByHopHeaders(sourceHeaders);
 	deleteHeader(headers, "x-portless");
@@ -12,6 +19,15 @@ export function buildBridgeRequestHeaders(
 	deleteHeader(headers, "x-forwarded-host");
 	deleteHeader(headers, "x-forwarded-proto");
 	deleteHeader(headers, "x-forwarded-port");
+	if (options.forwardedHost) {
+		headers["x-forwarded-host"] = options.forwardedHost;
+	}
+	if (options.forwardedProto) {
+		headers["x-forwarded-proto"] = options.forwardedProto;
+	}
+	if (options.forwardedPort !== undefined) {
+		headers["x-forwarded-port"] = String(options.forwardedPort);
+	}
 	headers.host = target.host;
 	return headers;
 }

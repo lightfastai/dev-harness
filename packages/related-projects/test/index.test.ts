@@ -288,14 +288,19 @@ test("bridge request headers rewrite host and strip stale proxy forwarding heade
 			connection: "keep-alive",
 		},
 		new URL("http://app.lightfast.localhost:1355/sign-in"),
+		{
+			forwardedHost: "lightfast.localhost:1355",
+			forwardedProto: "http",
+			forwardedPort: 1355,
+		},
 	);
 
 	assert.equal(headers.host, "app.lightfast.localhost:1355");
 	assert.equal(headers.origin, "http://lightfast.localhost:1355");
 	assert.equal(headers["x-forwarded-for"], "127.0.0.1");
-	assert.equal(headers["x-forwarded-host"], undefined);
-	assert.equal(headers["x-forwarded-port"], undefined);
-	assert.equal(headers["x-forwarded-proto"], undefined);
+	assert.equal(headers["x-forwarded-host"], "lightfast.localhost:1355");
+	assert.equal(headers["x-forwarded-port"], "1355");
+	assert.equal(headers["x-forwarded-proto"], "http");
 	assert.equal(headers["x-portless"], undefined);
 	assert.equal(headers["x-portless-hops"], undefined);
 	assert.equal(headers.connection, undefined);
