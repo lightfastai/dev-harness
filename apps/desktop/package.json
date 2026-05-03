@@ -1,0 +1,12 @@
+{
+  "name": "desktop",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "typecheck": "echo \"(no typecheck for desktop)\""
+  },
+  "dependencies": {
+    "electron": "^33.0.0"
+  }
+}

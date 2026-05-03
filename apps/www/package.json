@@ -1,0 +1,20 @@
+{
+  "name": "www",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port $(microfrontends port)",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vercel/microfrontends": "2.3.2",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.0.0"
+  }
+}

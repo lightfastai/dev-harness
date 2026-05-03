@@ -1,0 +1,22 @@
+{
+  "name": "mfe-sandbox",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "portless run --name mfe pnpm dev:apps",
+    "dev:apps": "MFE_LOCAL_PROXY_PORT=${PORT:-3024} turbo run dev --parallel --filter=app --filter=www",
+    "dev:app": "pnpm --filter app dev",
+    "dev:desktop": "pnpm --filter desktop dev",
+    "dev:www": "pnpm --filter www dev",
+    "mfe:url": "portless get mfe",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "portless": "^0.12.0",
+    "turbo": "~2.5.0",
+    "typescript": "^5.0.0"
+  }
+}
