@@ -28,7 +28,7 @@ const require = createRequire(import.meta.url);
 
 test("loadPortlessMfeConfig reads JSON config and applies fixed defaults", async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "portless-mfe-config-"));
-	writeJson(path.join(root, "portless-mfe.config.json"), {
+	writeJson(path.join(root, "related-projects.json"), {
 		portless: {
 			name: "mfe",
 			port: 1355,
@@ -41,7 +41,7 @@ test("loadPortlessMfeConfig reads JSON config and applies fixed defaults", async
 
 	const config = await loadPortlessMfeConfig({ cwd: root });
 
-	assert.equal(config.configPath, path.join(root, "portless-mfe.config.json"));
+	assert.equal(config.configPath, path.join(root, "related-projects.json"));
 	assert.equal(config.portless.name, "mfe");
 	assert.equal(config.microfrontends.config, "apps/app/microfrontends.json");
 	assert.equal(config.microfrontends.proxyPortRange.max, 9999);
@@ -120,7 +120,7 @@ test("resolvePortlessUrl only reuses PORTLESS_URL for the matching service", () 
 
 test("resolvePortlessMfeRuntime loads config for direct API consumers", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "portless-mfe-runtime-"));
-	writeJson(path.join(root, "portless-mfe.config.json"), {
+	writeJson(path.join(root, "related-projects.json"), {
 		portless: {
 			name: "lightfast",
 			port: 1355,
@@ -151,7 +151,7 @@ test("resolvePortlessMfeRuntime loads config for direct API consumers", () => {
 
 test("withPortlessMfeDev adds config-derived local origins to Next config", () => {
 	const root = createFixtureWorkspace();
-	writeJson(path.join(root, "portless-mfe.config.json"), {
+	writeJson(path.join(root, "related-projects.json"), {
 		portless: {
 			name: "mfe",
 			tld: "localhost",
@@ -508,7 +508,7 @@ function createLightfastFixtureWorkspace() {
 		path.join(root, "pnpm-workspace.yaml"),
 		'packages:\n  - "apps/*"\n',
 	);
-	writeJson(path.join(root, "portless-mfe.config.json"), {
+	writeJson(path.join(root, "related-projects.json"), {
 		portless: {
 			name: "lightfast",
 			port: 1355,

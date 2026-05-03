@@ -211,7 +211,7 @@ interface CommandResult {
 
 type FallbackCommand = [string, string[]];
 
-const CONFIG_FILENAMES = ["portless-mfe.config.json"];
+const CONFIG_FILENAMES = ["related-projects.json"];
 const RUNTIME_CONFIG_FILENAME = "microfrontends.local.json";
 const DEFAULT_APP_BRIDGE_PORT_RANGE = { min: 5100, max: 8999 };
 const DEFAULT_PROXY_PORT_RANGE = { min: 9000, max: 9999 };

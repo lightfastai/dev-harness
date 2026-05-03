@@ -1007,7 +1007,7 @@ function printHelp() {
   portless-mfe identity [--path <path>] [--app-name <name>] [--json]
 
 Options:
-  --config <path>       Path to portless-mfe.config.json
+  --config <path>       Path to related-projects.json
   --name <name>         Portless base route name
   --local-app <name>    Locally running Vercel Microfrontends application
   --path <path>         Target path to append to the Portless URL

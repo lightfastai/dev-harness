@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const CONFIG_FILENAMES = ["portless-mfe.config.json"];
+const CONFIG_FILENAMES = ["related-projects.json"];
 const DEFAULT_PORTLESS_NAME = "mfe";
 const DEFAULT_PORTLESS_TLD = "localhost";
 const DEFAULT_MFE_CONFIG = "microfrontends.json";
