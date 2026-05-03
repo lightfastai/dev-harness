@@ -3,12 +3,14 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import {
+	addTurboDevEnvMode,
 	buildPortlessEnv,
+	createVercelMicrofrontendsDevEnv,
 	createVercelMicrofrontendsDevConfig,
+	inferLocalAppNames,
 	loadPortlessMfeConfig,
 	resolveRuntimeIdentity,
 	resolveTargetUrl,
-	selectLocalAppNames,
 	startPortlessProxy,
 } from "../src/index.js";
 
@@ -17,6 +19,9 @@ const command = args.shift();
 
 try {
 	switch (command) {
+		case "turbo":
+			await handleTurbo(args);
+			break;
 		case "dev":
 			await handleDev(args);
 			break;
@@ -46,6 +51,67 @@ try {
 	process.exit(1);
 }
 
+async function handleTurbo(args) {
+	const { options, turboArgs } = parseTurboArgs(args);
+	if (!turboArgs.length) {
+		throw new Error("Usage: portless-mfe turbo [options] run dev [...turbo args]");
+	}
+
+	const config = await loadPortlessMfeConfig({
+		cwd: process.cwd(),
+		configPath: options.config,
+	});
+	const portlessName = options.name ?? config.portless.name;
+	const { env } = startPortlessProxy({
+		config: {
+			...config,
+			portless: {
+				...config.portless,
+				name: portlessName,
+			},
+		},
+		cwd: config.root,
+		env: process.env,
+	});
+	const turboCommandArgs = normalizeTurboCommandArgs(turboArgs);
+	const child = spawn(
+		"portless",
+		[
+			"run",
+			"--name",
+			portlessName,
+			"portless-mfe",
+			"dev",
+			...(options.config ? ["--config", options.config] : []),
+			...options.localApps.flatMap((appName) => ["--local-app", appName]),
+			"--",
+			...turboCommandArgs,
+		],
+		{
+			cwd: config.root,
+			env,
+			stdio: "inherit",
+		},
+	);
+
+	for (const signal of ["SIGINT", "SIGTERM"]) {
+		process.on(signal, () => {
+			if (!child.killed) {
+				child.kill(signal);
+			}
+		});
+	}
+
+	child.on("exit", (code, signal) => {
+		if (signal) {
+			process.exit(signalExitCode(signal));
+			return;
+		}
+
+		process.exit(code ?? 0);
+	});
+}
+
 async function handleDev(args) {
 	const { options, commandArgs } = parseCommandArgs(args);
 	if (!commandArgs.length) {
@@ -67,10 +133,15 @@ async function handleDev(args) {
 			generatedConfigPath: path.resolve(process.cwd(), options.proxyConfigPath),
 		};
 	}
-	const localApps = selectLocalAppNames(
-		result.sourceConfig.applications,
-		readRequestedLocalApps(options),
-	);
+	const localApps = inferLocalAppNames({
+		applications: result.sourceConfig.applications,
+		requestedApps: options.localApps,
+		commandArgs,
+		appDirs: result.appDirs,
+		cwd: process.cwd(),
+		root: config.root,
+		env: process.env,
+	});
 
 	console.log(
 		[
@@ -82,18 +153,16 @@ async function handleDev(args) {
 		].join("\n"),
 	);
 
-	const childEnv = {
-		...process.env,
-		MFE_LOCAL_PROXY_PORT: String(result.localProxyPort),
-		PORTLESS_MFE_LOCAL_APPS: localApps.join(","),
-		VC_MICROFRONTENDS_CONFIG: result.generatedConfigPath,
-		VC_MICROFRONTENDS_CONFIG_FILE_NAME: result.runtimeConfigFilename,
-	};
+	const childEnv = createVercelMicrofrontendsDevEnv({
+		result,
+		localApps,
+		env: process.env,
+	});
 	const shouldStartProxy = !isTurboRunCommand(commandArgs);
 	const proxy = shouldStartProxy
 		? await startMicrofrontendsProxy({ config, result, localApps, env: childEnv })
 		: undefined;
-	const devCommandArgs = disableTurboFrameworkInference(commandArgs);
+	const devCommandArgs = disableTurboFrameworkInference(addTurboDevEnvMode(commandArgs));
 	const child = spawn(devCommandArgs[0], devCommandArgs.slice(1), {
 		cwd: config.root,
 		env: childEnv,
@@ -157,17 +226,19 @@ async function handleProxy(args) {
 		config,
 		env: process.env,
 	});
-	const localApps = selectLocalAppNames(
-		result.sourceConfig.applications,
-		readRequestedLocalApps(options),
-	);
-	const proxyEnv = {
-		...process.env,
-		MFE_LOCAL_PROXY_PORT: String(result.localProxyPort),
-		PORTLESS_MFE_LOCAL_APPS: localApps.join(","),
-		VC_MICROFRONTENDS_CONFIG: result.generatedConfigPath,
-		VC_MICROFRONTENDS_CONFIG_FILE_NAME: result.runtimeConfigFilename,
-	};
+	const localApps = inferLocalAppNames({
+		applications: result.sourceConfig.applications,
+		requestedApps: options.localApps,
+		appDirs: result.appDirs,
+		cwd: process.cwd(),
+		root: config.root,
+		env: process.env,
+	});
+	const proxyEnv = createVercelMicrofrontendsDevEnv({
+		result,
+		localApps,
+		env: process.env,
+	});
 	const proxy = await startMicrofrontendsProxy({
 		config,
 		result,
@@ -227,6 +298,58 @@ function parseProxyOptions(args) {
 	}
 
 	return { options };
+}
+
+function parseTurboArgs(args) {
+	const options = { localApps: [] };
+	let index = 0;
+
+	for (; index < args.length; index++) {
+		const arg = args[index];
+
+		if (arg === "--") {
+			index++;
+			break;
+		}
+
+		if (arg === "--config") {
+			options.config = readOptionValue(args, ++index, arg);
+			continue;
+		}
+		if (arg.startsWith("--config=")) {
+			options.config = arg.slice("--config=".length);
+			continue;
+		}
+		if (arg === "--name") {
+			options.name = readOptionValue(args, ++index, arg);
+			continue;
+		}
+		if (arg.startsWith("--name=")) {
+			options.name = arg.slice("--name=".length);
+			continue;
+		}
+		if (arg === "--local-app") {
+			options.localApps.push(readOptionValue(args, ++index, arg));
+			continue;
+		}
+		if (arg.startsWith("--local-app=")) {
+			options.localApps.push(arg.slice("--local-app=".length));
+			continue;
+		}
+		if (arg === "-h" || arg === "--help") {
+			printHelp();
+			process.exit(0);
+		}
+
+		break;
+	}
+
+	return { options, turboArgs: args.slice(index) };
+}
+
+function normalizeTurboCommandArgs(args) {
+	const commandArgs = path.basename(args[0] ?? "") === "turbo" ? args : ["turbo", ...args];
+	return addTurboDevEnvMode(commandArgs);
 }
 
 async function handleRun(args) {
@@ -468,17 +591,6 @@ function isTurboRunCommand(commandArgs) {
 		commandArgs.includes("run");
 }
 
-function readRequestedLocalApps(options) {
-	if (options.localApps.length) {
-		return options.localApps;
-	}
-
-	return (process.env.PORTLESS_MFE_LOCAL_APPS ?? "")
-		.split(",")
-		.map((appName) => appName.trim())
-		.filter(Boolean);
-}
-
 function spawnWithFallback(commands, options) {
 	return new Promise((resolve, reject) => {
 		const tryCommand = (index) => {
@@ -529,6 +641,7 @@ function signalExitCode(signal) {
 
 function printHelp() {
 	console.log(`Usage:
+  portless-mfe turbo [--name <name>] [--local-app <name>] run dev [...turbo args]
   portless-mfe dev [--local-app <name>] -- <command> [...args]
   portless-mfe run [--name <name>] [--local-app <name>] -- <command> [...args]
   portless-mfe proxy [--local-app <name>]

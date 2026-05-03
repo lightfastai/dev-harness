@@ -314,14 +314,122 @@ export function selectLocalAppNames(applications, requestedApps = []) {
 		return allAppNames;
 	}
 
-	const unknownApps = requested.filter((appName) => !allAppNames.includes(appName));
+	const selected = [];
+	const unknownApps = [];
+
+	for (const requestedApp of requested) {
+		const appName = resolveRequestedApplicationName(applications, requestedApp);
+		if (!appName) {
+			unknownApps.push(requestedApp);
+			continue;
+		}
+
+		if (!selected.includes(appName)) {
+			selected.push(appName);
+		}
+	}
+
 	if (unknownApps.length) {
 		throw new Error(
 			`Unknown local app(s): ${unknownApps.join(", ")}. Available apps: ${allAppNames.join(", ")}`,
 		);
 	}
 
-	return Array.from(new Set(requested));
+	return selected;
+}
+
+export function inferLocalAppNames({
+	applications,
+	requestedApps = [],
+	commandArgs = [],
+	appDirs = {},
+	cwd = process.cwd(),
+	root = process.cwd(),
+	env = process.env,
+} = {}) {
+	const envApps = parseList(env.PORTLESS_MFE_LOCAL_APPS);
+	const explicitApps = requestedApps.length ? requestedApps : envApps;
+
+	if (explicitApps.length) {
+		return selectLocalAppNames(applications, explicitApps);
+	}
+
+	const filteredApps = extractCommandFilters(commandArgs)
+		.map((filter) => resolveFilterToApplicationName(filter, { appDirs, root }) ?? filter);
+	if (filteredApps.length) {
+		return selectLocalAppNames(applications, filteredApps);
+	}
+
+	const cwdApp = resolveCwdApplicationName({ appDirs, cwd });
+	if (cwdApp) {
+		return [cwdApp];
+	}
+
+	return selectLocalAppNames(applications);
+}
+
+export function createVercelMicrofrontendsDevEnv({
+	result,
+	localApps = result?.localAppNames ?? [],
+	env = process.env,
+} = {}) {
+	if (!result) {
+		throw new Error("createVercelMicrofrontendsDevEnv requires a generated dev config result.");
+	}
+
+	return {
+		...env,
+		MFE_LOCAL_PROXY_PORT: String(result.localProxyPort),
+		PORTLESS_MFE_LOCAL_APPS: localApps.join(","),
+		VC_MICROFRONTENDS_CONFIG: result.generatedConfigPath,
+		VC_MICROFRONTENDS_CONFIG_FILE_NAME: result.runtimeConfigFilename,
+	};
+}
+
+export function addTurboDevEnvMode(commandArgs) {
+	if (!hasTurboRunCommand(commandArgs) || hasTurboEnvMode(commandArgs) || !hasTurboDevTask(commandArgs)) {
+		return commandArgs;
+	}
+
+	const runIndex = commandArgs.indexOf("run");
+	return [
+		...commandArgs.slice(0, runIndex + 1),
+		"--env-mode=loose",
+		...commandArgs.slice(runIndex + 1),
+	];
+}
+
+export function extractCommandFilters(commandArgs = []) {
+	const filters = [];
+
+	for (let i = 0; i < commandArgs.length; i++) {
+		const arg = commandArgs[i];
+
+		if (arg === "--filter" || arg === "-F") {
+			const selector = normalizeFilterSelector(commandArgs[++i]);
+			if (selector) {
+				filters.push(selector);
+			}
+			continue;
+		}
+
+		if (arg.startsWith("--filter=")) {
+			const selector = normalizeFilterSelector(arg.slice("--filter=".length));
+			if (selector) {
+				filters.push(selector);
+			}
+			continue;
+		}
+
+		if (arg.startsWith("-F=")) {
+			const selector = normalizeFilterSelector(arg.slice("-F=".length));
+			if (selector) {
+				filters.push(selector);
+			}
+		}
+	}
+
+	return filters;
 }
 
 export function resolvePortlessHost({
@@ -713,6 +821,133 @@ function readBranchFromHead(gitDir) {
 	} catch {
 		return undefined;
 	}
+}
+
+function resolveRequestedApplicationName(applications = {}, requestedApp) {
+	if (Object.hasOwn(applications, requestedApp)) {
+		return requestedApp;
+	}
+
+	const matches = Object.entries(applications)
+		.filter(([, appConfig]) => {
+			const packageName = appConfig?.packageName;
+			return packageName === requestedApp || packageShortName(packageName ?? "") === requestedApp;
+		})
+		.map(([appName]) => appName);
+
+	if (matches.length === 1) {
+		return matches[0];
+	}
+
+	return undefined;
+}
+
+function resolveFilterToApplicationName(filter, { appDirs = {}, root = process.cwd() } = {}) {
+	if (!filter.includes("/") && !filter.startsWith(".")) {
+		return undefined;
+	}
+
+	const resolvedFilter = path.resolve(root, filter);
+	for (const [appName, appDir] of Object.entries(appDirs)) {
+		if (resolvedFilter === path.resolve(appDir)) {
+			return appName;
+		}
+	}
+
+	return undefined;
+}
+
+function resolveCwdApplicationName({ appDirs = {}, cwd = process.cwd() } = {}) {
+	const resolvedCwd = path.resolve(cwd);
+	const matches = Object.entries(appDirs)
+		.filter(([, appDir]) => isPathInside(resolvedCwd, path.resolve(appDir)))
+		.sort(([, left], [, right]) => right.length - left.length);
+	return matches[0]?.[0];
+}
+
+function isPathInside(child, parent) {
+	const relative = path.relative(parent, child);
+	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function parseList(value) {
+	return String(value ?? "")
+		.split(",")
+		.map((item) => item.trim())
+		.filter(Boolean);
+}
+
+function normalizeFilterSelector(value) {
+	if (!value) {
+		return undefined;
+	}
+
+	let selector = String(value).trim();
+	if (!selector || selector.startsWith("!")) {
+		return undefined;
+	}
+
+	selector = selector.replace(/\[[^\]]+\]$/, "");
+	while (selector.startsWith("...")) {
+		selector = selector.slice(3);
+	}
+	while (selector.endsWith("...")) {
+		selector = selector.slice(0, -3);
+	}
+
+	return selector || undefined;
+}
+
+function hasTurboRunCommand(commandArgs = []) {
+	if (!commandArgs.length) {
+		return false;
+	}
+
+	const command = path.basename(commandArgs[0]);
+	if (command === "turbo" && commandArgs.includes("run")) {
+		return true;
+	}
+
+	return command === "pnpm" &&
+		commandArgs[1] === "exec" &&
+		commandArgs[2] === "turbo" &&
+		commandArgs.includes("run");
+}
+
+function hasTurboEnvMode(commandArgs = []) {
+	return commandArgs.some((arg) => arg === "--env-mode" || arg.startsWith("--env-mode="));
+}
+
+function hasTurboDevTask(commandArgs = []) {
+	const runIndex = commandArgs.indexOf("run");
+	if (runIndex === -1) {
+		return false;
+	}
+
+	for (let i = runIndex + 1; i < commandArgs.length; i++) {
+		const arg = commandArgs[i];
+		if (arg === "--") {
+			continue;
+		}
+		if (arg.startsWith("--")) {
+			if (!arg.includes("=") && commandArgs[i + 1] && !commandArgs[i + 1].startsWith("-")) {
+				i++;
+			}
+			continue;
+		}
+		if (arg.startsWith("-")) {
+			if (!arg.includes("=") && commandArgs[i + 1] && !commandArgs[i + 1].startsWith("-")) {
+				i++;
+			}
+			continue;
+		}
+
+		if (arg === "dev" || arg.startsWith("dev:")) {
+			return true;
+		}
+	}
+
+	return false;
 }
 
 function isHttpsEnabled(config, env) {

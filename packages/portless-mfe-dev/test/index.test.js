@@ -4,9 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+	addTurboDevEnvMode,
 	branchToPrefix,
 	choosePort,
+	createVercelMicrofrontendsDevEnv,
 	createVercelMicrofrontendsDevConfig,
+	inferLocalAppNames,
 	loadPortlessMfeConfig,
 	resolveRuntimeIdentity,
 	resolveTargetUrl,
@@ -156,6 +159,79 @@ test("selectLocalAppNames defaults to all apps and validates requested local app
 	assert.throws(
 		() => selectLocalAppNames(applications, ["missing"]),
 		/Unknown local app\(s\): missing/,
+	);
+});
+
+test("selectLocalAppNames accepts Vercel app names, package names, and short package names", () => {
+	const applications = {
+		"lightfast-app": {
+			packageName: "@lightfast/app",
+		},
+		"lightfast-www": {
+			packageName: "@lightfast/www",
+		},
+	};
+
+	assert.deepEqual(
+		selectLocalAppNames(applications, ["@lightfast/www", "app"]),
+		["lightfast-www", "lightfast-app"],
+	);
+});
+
+test("inferLocalAppNames uses command filters and falls back without --local-app", () => {
+	const applications = {
+		"lightfast-app": {
+			packageName: "@lightfast/app",
+		},
+		"lightfast-www": {
+			packageName: "@lightfast/www",
+		},
+	};
+
+	assert.deepEqual(
+		inferLocalAppNames({
+			applications,
+			commandArgs: [
+				"turbo",
+				"run",
+				"dev",
+				"-F",
+				"@lightfast/www",
+				"--filter=@lightfast/app",
+			],
+		}),
+		["lightfast-www", "lightfast-app"],
+	);
+	assert.deepEqual(inferLocalAppNames({ applications }), [
+		"lightfast-app",
+		"lightfast-www",
+	]);
+});
+
+test("portless-mfe turbo helpers inject dev env and Turbo loose env mode", () => {
+	const result = {
+		localProxyPort: 9123,
+		generatedConfigPath: "/repo/apps/app/microfrontends.local.json",
+		runtimeConfigFilename: "microfrontends.local.json",
+	};
+	const env = createVercelMicrofrontendsDevEnv({
+		result,
+		localApps: ["lightfast-app", "lightfast-www"],
+		env: { EXISTING: "1" },
+	});
+
+	assert.equal(env.EXISTING, "1");
+	assert.equal(env.MFE_LOCAL_PROXY_PORT, "9123");
+	assert.equal(env.PORTLESS_MFE_LOCAL_APPS, "lightfast-app,lightfast-www");
+	assert.equal(env.VC_MICROFRONTENDS_CONFIG, "/repo/apps/app/microfrontends.local.json");
+	assert.equal(env.VC_MICROFRONTENDS_CONFIG_FILE_NAME, "microfrontends.local.json");
+	assert.deepEqual(
+		addTurboDevEnvMode(["turbo", "run", "dev", "--filter=app"]),
+		["turbo", "run", "--env-mode=loose", "dev", "--filter=app"],
+	);
+	assert.deepEqual(
+		addTurboDevEnvMode(["turbo", "run", "--env-mode=strict", "dev"]),
+		["turbo", "run", "--env-mode=strict", "dev"],
 	);
 });
 

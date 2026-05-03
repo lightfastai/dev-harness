@@ -1,14 +1,5 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalPassThroughEnv": [
-    "HOST",
-    "MFE_LOCAL_PROXY_PORT",
-    "PORT",
-    "PORTLESS_MFE_LOCAL_APPS",
-    "PORTLESS_URL",
-    "VC_MICROFRONTENDS_CONFIG",
-    "VC_MICROFRONTENDS_CONFIG_FILE_NAME"
-  ],
   "tasks": {
     "dev": {
       "cache": false,
