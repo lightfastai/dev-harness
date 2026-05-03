@@ -1,8 +1,9 @@
 {
   "name": "app",
   "private": true,
+  "portless": "app.mfe",
   "scripts": {
-    "dev": "next dev --port $(microfrontends port)",
+    "dev": "portless run next dev",
     "proxy": "portless-mfe proxy",
     "typecheck": "tsc --noEmit"
   },

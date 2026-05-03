@@ -5,7 +5,7 @@ import path from "node:path";
 
 const CONFIG_FILENAMES = ["portless-mfe.config.json"];
 const RUNTIME_CONFIG_FILENAME = "microfrontends.local.json";
-const DEFAULT_APP_PORT_RANGE = { min: 5100, max: 8999 };
+const DEFAULT_APP_BRIDGE_PORT_RANGE = { min: 5100, max: 8999 };
 const DEFAULT_PROXY_PORT_RANGE = { min: 9000, max: 9999 };
 const DEFAULT_PORTLESS_PORT = 1355;
 const DEFAULT_PORTLESS_NAME = "mfe";
@@ -120,17 +120,20 @@ export function loadPortlessMfeConfigSync({ cwd = process.cwd(), configPath } = 
 	});
 }
 
-export function resolveTargetUrl({
+export function resolvePortlessUrl({
 	name,
 	path: targetPath,
 	targetUrl,
 	cwd = process.cwd(),
 	env = process.env,
 	config,
+	configPath,
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
+	preferCurrentPortlessUrl = true,
 } = {}) {
-	const normalized = normalizePackageConfig(config ?? {}, { root: cwd });
+	const normalized = resolveOptionalPackageConfigForApi({ cwd, config, configPath }) ??
+		normalizePackageConfig(config ?? {}, { root: cwd });
 	const portlessName = name ?? normalized.portless.name;
 	const resolvedTargetPath = targetPath ?? "/";
 
@@ -138,23 +141,32 @@ export function resolveTargetUrl({
 		return targetUrl;
 	}
 
-	if (env.PORTLESS_URL) {
+	if (
+		preferCurrentPortlessUrl &&
+		env.PORTLESS_URL &&
+		portlessUrlMatchesName(env.PORTLESS_URL, portlessName, env.PORTLESS_TLD || normalized.portless.tld)
+	) {
 		return withTargetPath(env.PORTLESS_URL, resolvedTargetPath);
 	}
 
 	const host = resolvePortlessHost({
 		name: portlessName,
-		cwd,
+		cwd: normalized.root,
 		env,
 		config: normalized,
 		getPortlessUrl,
 		detectWorktreePrefix,
+		preferCurrentPortlessUrl,
 	});
 
 	const protocol = isHttpsEnabled(normalized, env) ? "https" : "http";
 	const port = parsePort(env.PORTLESS_PORT) ?? normalized.portless.port;
 	const portSuffix = shouldIncludePort(protocol, port) ? `:${port}` : "";
 	return withTargetPath(`${protocol}://${host}${portSuffix}`, resolvedTargetPath);
+}
+
+export function resolveTargetUrl(options = {}) {
+	return resolvePortlessUrl(options);
 }
 
 export function resolveRuntimeIdentity({
@@ -205,7 +217,7 @@ export function resolvePortlessMfeUrl({
 	const portlessName = name ?? normalized.portless.name;
 	const runtimeEnv = buildPortlessEnv(normalized, env);
 
-	return resolveTargetUrl({
+	return resolvePortlessUrl({
 		name: portlessName,
 		path: targetPath,
 		targetUrl,
@@ -232,7 +244,7 @@ export function resolvePortlessMfeRuntime({
 	const normalized = resolvePackageConfigForApi({ cwd, config, configPath });
 	const portlessName = name ?? normalized.portless.name;
 	const runtimeEnv = buildPortlessEnv(normalized, env);
-	const resolvedTargetUrl = resolveTargetUrl({
+	const resolvedTargetUrl = resolvePortlessUrl({
 		name: portlessName,
 		path: targetPath,
 		targetUrl,
@@ -250,6 +262,46 @@ export function resolvePortlessMfeRuntime({
 		cwd: normalized.root,
 		env: runtimeEnv,
 		config: normalized,
+	});
+}
+
+export function resolvePortlessApplicationUrl({
+	app,
+	path: targetPath,
+	targetUrl,
+	cwd = process.cwd(),
+	env = process.env,
+	config,
+	configPath,
+	sourceConfig,
+	getPortlessUrl = defaultGetPortlessUrl,
+	detectWorktreePrefix = defaultDetectWorktreePrefix,
+} = {}) {
+	if (!app) {
+		throw new Error("resolvePortlessApplicationUrl requires an app name.");
+	}
+
+	const normalized = resolvePackageConfigForApi({ cwd, config, configPath });
+	const resolvedSourceConfig = sourceConfig ?? readMicrofrontendsConfig(normalized);
+	const applications = resolvedSourceConfig.applications ?? {};
+	const appName = resolveRequestedApplicationName(applications, app);
+
+	if (!appName) {
+		throw new Error(
+			`Unknown app "${app}". Available apps: ${Object.keys(applications).join(", ")}`,
+		);
+	}
+
+	return resolvePortlessUrl({
+		name: resolveApplicationPortlessName(appName, applications[appName], normalized),
+		path: targetPath,
+		targetUrl,
+		cwd: normalized.root,
+		env,
+		config: normalized,
+		getPortlessUrl,
+		detectWorktreePrefix,
+		preferCurrentPortlessUrl: false,
 	});
 }
 
@@ -278,9 +330,28 @@ export function getPortlessMfeDevOrigins({
 	const fallbackConfig = normalized ?? normalizePackageConfig({}, { root: cwd });
 	const portlessName = name ?? fallbackConfig.portless.name;
 	const portlessTld = tld ?? env.PORTLESS_TLD ?? fallbackConfig.portless.tld;
-	const baseHost = `${portlessName}.${portlessTld}`;
+	const portlessNames = [portlessName];
 
-	return includeWildcard ? [baseHost, `*.${baseHost}`] : [baseHost];
+	if (normalized) {
+		const sourceConfig = readMicrofrontendsConfigIfAvailable(normalized);
+		const originConfig = {
+			...normalized,
+			portless: {
+				...normalized.portless,
+				name: portlessName,
+			},
+		};
+		for (const [appName, appConfig] of Object.entries(sourceConfig?.applications ?? {})) {
+			portlessNames.push(resolveApplicationPortlessName(appName, appConfig, originConfig));
+		}
+	}
+
+	return unique(
+		portlessNames.flatMap((value) => {
+			const host = `${value}.${portlessTld}`;
+			return includeWildcard ? [host, `*.${host}`] : [host];
+		}),
+	);
 }
 
 export async function createVercelMicrofrontendsDevConfig({
@@ -315,23 +386,37 @@ export async function createVercelMicrofrontendsDevConfig({
 		range: mfeConfigOptions.proxyPortRange,
 		portAvailable,
 	});
-	const usedPorts = new Set([localProxyPort]);
 	const applications = sourceConfig.applications ?? {};
 	const resolvedAppDirs = resolveApplicationDirectories({
 		root: normalized.root,
 		applications,
 		overrides: appDirs ?? mfeConfigOptions.apps,
 	});
-	const appPorts = {};
-
+	const appUrls = Object.fromEntries(
+		Object.entries(applications).map(([appName, appConfig]) => [
+			appName,
+			resolvePortlessUrl({
+				name: resolveApplicationPortlessName(appName, appConfig, normalized),
+				cwd: normalized.root,
+				env,
+				config: normalized,
+				getPortlessUrl,
+				detectWorktreePrefix,
+				preferCurrentPortlessUrl: false,
+			}),
+		]),
+	);
+	const appBridgePorts = {};
+	const usedPorts = new Set([localProxyPort]);
 	for (const appName of Object.keys(applications)) {
-		appPorts[appName] = await choosePort(`${host}:${appName}`, {
-			min: mfeConfigOptions.appPortRange.min,
-			max: mfeConfigOptions.appPortRange.max,
+		const port = await choosePort(`${host}:${appName}:bridge`, {
+			min: DEFAULT_APP_BRIDGE_PORT_RANGE.min,
+			max: DEFAULT_APP_BRIDGE_PORT_RANGE.max,
 			usedPorts,
 			portAvailable,
 		});
-		usedPorts.add(appPorts[appName]);
+		usedPorts.add(port);
+		appBridgePorts[appName] = port;
 	}
 
 	const generatedConfig = {
@@ -347,7 +432,7 @@ export async function createVercelMicrofrontendsDevConfig({
 					...appConfig,
 					development: {
 						...(appConfig.development ?? {}),
-						local: appPorts[appName],
+						local: appBridgePorts[appName],
 					},
 				},
 			]),
@@ -364,7 +449,8 @@ export async function createVercelMicrofrontendsDevConfig({
 	return {
 		host,
 		localProxyPort,
-		appPorts,
+		appUrls,
+		appBridgePorts,
 		appDirs: resolvedAppDirs,
 		sourceConfig,
 		generatedConfig,
@@ -378,6 +464,7 @@ export async function createVercelMicrofrontendsDevConfig({
 export function normalizePackageConfig(rawConfig, { root = process.cwd(), configPath } = {}) {
 	const portless = rawConfig?.portless ?? {};
 	const microfrontends = rawConfig?.microfrontends ?? {};
+	const relatedProjects = rawConfig?.relatedProjects ?? {};
 
 	return {
 		root,
@@ -391,15 +478,12 @@ export function normalizePackageConfig(rawConfig, { root = process.cwd(), config
 		microfrontends: {
 			config: microfrontends.config ?? "microfrontends.json",
 			apps: microfrontends.apps ?? {},
-			appPortRange: {
-				min: parsePort(microfrontends.appPortRange?.min) ?? DEFAULT_APP_PORT_RANGE.min,
-				max: parsePort(microfrontends.appPortRange?.max) ?? DEFAULT_APP_PORT_RANGE.max,
-			},
 			proxyPortRange: {
 				min: parsePort(microfrontends.proxyPortRange?.min) ?? DEFAULT_PROXY_PORT_RANGE.min,
 				max: parsePort(microfrontends.proxyPortRange?.max) ?? DEFAULT_PROXY_PORT_RANGE.max,
 			},
 		},
+		relatedProjects,
 	};
 }
 
@@ -477,6 +561,7 @@ export function createVercelMicrofrontendsDevEnv({
 	return {
 		...env,
 		MFE_LOCAL_PROXY_PORT: String(result.localProxyPort),
+		MFE_DISABLE_LOCAL_PROXY_REWRITE: env.MFE_DISABLE_LOCAL_PROXY_REWRITE ?? "1",
 		PORTLESS_MFE_LOCAL_APPS: localApps.join(","),
 		VC_MICROFRONTENDS_CONFIG: result.generatedConfigPath,
 		VC_MICROFRONTENDS_CONFIG_FILE_NAME: result.runtimeConfigFilename,
@@ -536,10 +621,18 @@ export function resolvePortlessHost({
 	config,
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
+	preferCurrentPortlessUrl = true,
 } = {}) {
 	const normalized = normalizePackageConfig(config ?? {}, { root: cwd });
 	const portlessName = name ?? normalized.portless.name;
-	const url = env.PORTLESS_URL || getPortlessUrl(portlessName, { cwd, env });
+	const tld = env.PORTLESS_TLD || normalized.portless.tld;
+	const currentUrl =
+		preferCurrentPortlessUrl &&
+		env.PORTLESS_URL &&
+		portlessUrlMatchesName(env.PORTLESS_URL, portlessName, tld)
+			? env.PORTLESS_URL
+			: undefined;
+	const url = currentUrl || getPortlessUrl(portlessName, { cwd, env });
 
 	if (url) {
 		try {
@@ -551,7 +644,7 @@ export function resolvePortlessHost({
 
 	const prefix = detectWorktreePrefix(cwd);
 	const effectiveName = prefix ? `${prefix}.${portlessName}` : portlessName;
-	return `${effectiveName}.${env.PORTLESS_TLD || normalized.portless.tld}`;
+	return `${effectiveName}.${tld}`;
 }
 
 export function resolveApplicationDirectories({ root, applications, overrides = {} }) {
@@ -566,9 +659,9 @@ export function resolveApplicationDirectories({ root, applications, overrides = 
 
 	return Object.fromEntries(
 		Object.entries(applications).flatMap(([appName, appConfig]) => {
-			const override = overrides[appName];
-			if (override) {
-				return [[appName, path.resolve(root, override)]];
+			const override = normalizeApplicationOverride(overrides[appName]);
+			if (override.dir) {
+				return [[appName, path.resolve(root, override.dir)]];
 			}
 
 			const packageName = appConfig.packageName ?? appName;
@@ -737,6 +830,70 @@ function runWithFallbackCommands({ commands, cwd, env, runner, stdio }) {
 	}
 
 	return lastResult;
+}
+
+export function resolveApplicationPortlessName(appName, appConfig = {}, config = {}) {
+	const normalized = normalizePackageConfig(config, { root: config.root ?? process.cwd() });
+	const override = normalizeApplicationOverride(normalized.microfrontends.apps?.[appName]);
+	if (override.portlessName) {
+		return normalizePortlessName(override.portlessName);
+	}
+
+	const packageName = appConfig.packageName ?? appName;
+	const shortName = packageShortName(packageName);
+	return normalizePortlessName(`${shortName}.${normalized.portless.name}`);
+}
+
+function readMicrofrontendsConfig(config) {
+	const normalized = normalizePackageConfig(config, { root: config.root ?? process.cwd() });
+	const sourcePath = path.resolve(normalized.root, normalized.microfrontends.config);
+	return JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+}
+
+function readMicrofrontendsConfigIfAvailable(config) {
+	try {
+		return readMicrofrontendsConfig(config);
+	} catch {
+		return undefined;
+	}
+}
+
+function normalizeApplicationOverride(value) {
+	if (!value) {
+		return {};
+	}
+	if (typeof value === "string") {
+		return { dir: value };
+	}
+	if (typeof value === "object" && !Array.isArray(value)) {
+		return {
+			dir: value.dir ?? value.path,
+			portlessName: value.portlessName,
+		};
+	}
+	return {};
+}
+
+function normalizePortlessName(value) {
+	return String(value)
+		.split(".")
+		.map((label) => sanitizeHostnameLabels(label))
+		.filter(Boolean)
+		.join(".");
+}
+
+function portlessUrlMatchesName(url, name, tld) {
+	try {
+		const host = new URL(url).hostname;
+		const baseHost = `${name}.${tld}`;
+		return host === baseHost || host.endsWith(`.${baseHost}`);
+	} catch {
+		return false;
+	}
+}
+
+function unique(values) {
+	return Array.from(new Set(values.filter(Boolean)));
 }
 
 function resolvePackageConfigForApi({ cwd, config, configPath }) {

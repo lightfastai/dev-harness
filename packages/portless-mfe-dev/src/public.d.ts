@@ -9,16 +9,22 @@ export interface PortlessMfeConfig {
 	};
 	microfrontends?: {
 		config?: string;
-		apps?: Record<string, string>;
-		appPortRange?: {
-			min?: number | string;
-			max?: number | string;
-		};
+		apps?: Record<string, string | {
+			dir?: string;
+			path?: string;
+			portlessName?: string;
+		}>;
 		proxyPortRange?: {
 			min?: number | string;
 			max?: number | string;
 		};
 	};
+	relatedProjects?: Record<string, {
+		projectName?: string;
+		fallbackHost?: string;
+		portlessName?: string;
+		path?: string;
+	}>;
 }
 
 export interface RuntimeIdentity {
@@ -35,6 +41,7 @@ export interface ResolveTargetUrlOptions {
 	cwd?: string;
 	env?: Record<string, string | undefined>;
 	config?: PortlessMfeConfig;
+	configPath?: string;
 }
 
 export interface ResolveRuntimeIdentityOptions {
@@ -51,8 +58,15 @@ export interface ResolvePortlessMfeRuntimeOptions extends ResolveTargetUrlOption
 	configPath?: string;
 }
 
+export interface ResolvePortlessApplicationUrlOptions extends ResolveTargetUrlOptions {
+	app: string;
+	configPath?: string;
+}
+
+export function resolvePortlessUrl(options?: ResolveTargetUrlOptions): string;
 export function resolveTargetUrl(options?: ResolveTargetUrlOptions): string;
 export function resolveRuntimeIdentity(options: ResolveRuntimeIdentityOptions): RuntimeIdentity;
+export function resolvePortlessApplicationUrl(options: ResolvePortlessApplicationUrlOptions): string;
 export function resolvePortlessMfeUrl(options?: ResolvePortlessMfeRuntimeOptions): string;
 export function resolvePortlessMfeRuntime(options?: ResolvePortlessMfeRuntimeOptions): RuntimeIdentity;
 export function createVercelMicrofrontendsDevConfig(options?: Record<string, unknown>): Promise<Record<string, unknown>>;

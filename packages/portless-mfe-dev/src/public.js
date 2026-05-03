@@ -1,5 +1,7 @@
 export {
 	createVercelMicrofrontendsDevConfig,
+	resolvePortlessApplicationUrl,
+	resolvePortlessUrl,
 	resolvePortlessMfeRuntime,
 	resolvePortlessMfeUrl,
 	resolveRuntimeIdentity,

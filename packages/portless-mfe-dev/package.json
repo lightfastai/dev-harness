@@ -15,16 +15,21 @@
       "types": "./src/next.d.ts",
       "import": "./src/next.js",
       "require": "./src/next.cjs"
+    },
+    "./related-projects": {
+      "types": "./src/related-projects.d.ts",
+      "import": "./src/related-projects.js"
     }
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "typecheck": "node --check src/index.js && node --check src/public.js && node --check src/next.js && node --check src/next.cjs && node --check bin/portless-mfe.mjs"
+    "typecheck": "node --check src/index.js && node --check src/public.js && node --check src/next.js && node --check src/next.cjs && node --check src/related-projects.js && node --check bin/portless-mfe.mjs"
   },
   "engines": {
     "node": ">=22.0.0"
   },
   "dependencies": {
+    "@vercel/related-projects": "1.1.0",
     "portless": "^0.12.0"
   }
 }

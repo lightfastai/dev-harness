@@ -41,15 +41,58 @@
         "apps": {
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "minLength": 1
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "dir": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "portlessName": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            ]
           }
-        },
-        "appPortRange": {
-          "$ref": "#/$defs/portRange"
         },
         "proxyPortRange": {
           "$ref": "#/$defs/portRange"
+        }
+      }
+    },
+    "relatedProjects": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "projectName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fallbackHost": {
+            "type": "string",
+            "minLength": 1
+          },
+          "portlessName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string"
+          }
         }
       }
     }

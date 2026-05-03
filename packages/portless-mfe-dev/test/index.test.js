@@ -12,12 +12,15 @@ import {
 	getPortlessMfeDevOrigins,
 	inferLocalAppNames,
 	loadPortlessMfeConfig,
+	resolvePortlessApplicationUrl,
 	resolvePortlessMfeRuntime,
+	resolvePortlessUrl,
 	resolveRuntimeIdentity,
 	resolveTargetUrl,
 	selectLocalAppNames,
 } from "../src/index.js";
 import { withPortlessMfeDev } from "../src/next.js";
+import { resolveRelatedProjectUrl } from "../src/related-projects.js";
 
 test("loadPortlessMfeConfig reads JSON config and applies fixed defaults", async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "portless-mfe-config-"));
@@ -37,7 +40,6 @@ test("loadPortlessMfeConfig reads JSON config and applies fixed defaults", async
 	assert.equal(config.configPath, path.join(root, "portless-mfe.config.json"));
 	assert.equal(config.portless.name, "mfe");
 	assert.equal(config.microfrontends.config, "apps/app/microfrontends.json");
-	assert.equal(config.microfrontends.appPortRange.min, 5100);
 	assert.equal(config.microfrontends.proxyPortRange.max, 9999);
 	assert.equal("target" in config, false);
 });
@@ -90,6 +92,28 @@ test("resolveTargetUrl does not read a target path from package config", () => {
 	assert.equal(targetUrl, "http://mfe.localhost:1355/");
 });
 
+test("resolvePortlessUrl only reuses PORTLESS_URL for the matching service", () => {
+	const options = {
+		config: {
+			portless: {
+				name: "mfe",
+				port: 1355,
+				https: false,
+			},
+		},
+		env: {
+			PORTLESS_HTTPS: "0",
+			PORTLESS_PORT: "1355",
+			PORTLESS_URL: "http://fix-ui.mfe.localhost:1355",
+		},
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => "fix-ui",
+	};
+
+	assert.equal(resolvePortlessUrl({ ...options, name: "mfe" }), "http://fix-ui.mfe.localhost:1355/");
+	assert.equal(resolvePortlessUrl({ ...options, name: "app.mfe" }), "http://fix-ui.app.mfe.localhost:1355/");
+});
+
 test("resolvePortlessMfeRuntime loads config for direct API consumers", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "portless-mfe-runtime-"));
 	writeJson(path.join(root, "portless-mfe.config.json"), {
@@ -122,26 +146,42 @@ test("resolvePortlessMfeRuntime loads config for direct API consumers", () => {
 });
 
 test("withPortlessMfeDev adds config-derived local origins to Next config", () => {
-	const config = {
+	const root = createFixtureWorkspace();
+	writeJson(path.join(root, "portless-mfe.config.json"), {
 		portless: {
-			name: "lightfast",
+			name: "mfe",
 			tld: "localhost",
 		},
-	};
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+		},
+	});
 
-	assert.deepEqual(getPortlessMfeDevOrigins({ config }), [
-		"lightfast.localhost",
-		"*.lightfast.localhost",
+	assert.deepEqual(getPortlessMfeDevOrigins({ cwd: root }), [
+		"mfe.localhost",
+		"*.mfe.localhost",
+		"app.mfe.localhost",
+		"*.app.mfe.localhost",
+		"platform.mfe.localhost",
+		"*.platform.mfe.localhost",
+		"www.mfe.localhost",
+		"*.www.mfe.localhost",
 	]);
 
 	const wrapped = withPortlessMfeDev(
 		{ allowedDevOrigins: ["custom.localhost"] },
-		{ config },
+		{ cwd: root },
 	);
 	assert.deepEqual(wrapped.allowedDevOrigins, [
 		"custom.localhost",
-		"lightfast.localhost",
-		"*.lightfast.localhost",
+		"mfe.localhost",
+		"*.mfe.localhost",
+		"app.mfe.localhost",
+		"*.app.mfe.localhost",
+		"platform.mfe.localhost",
+		"*.platform.mfe.localhost",
+		"www.mfe.localhost",
+		"*.www.mfe.localhost",
 	]);
 
 	assert.deepEqual(
@@ -181,7 +221,6 @@ test("createVercelMicrofrontendsDevConfig infers arbitrary app directories", asy
 			},
 			microfrontends: {
 				config: "apps/app/microfrontends.json",
-				appPortRange: { min: 5100, max: 5110 },
 				proxyPortRange: { min: 9100, max: 9110 },
 			},
 		},
@@ -192,6 +231,7 @@ test("createVercelMicrofrontendsDevConfig infers arbitrary app directories", asy
 		write: false,
 		portAvailable: async () => true,
 		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => "feature",
 	});
 
 	assert.equal(result.host, "feature.mfe.localhost");
@@ -207,10 +247,24 @@ test("createVercelMicrofrontendsDevConfig infers arbitrary app directories", asy
 		result.generatedConfig.options.localProxyPort,
 		7777,
 	);
-	assert.equal(
-		typeof result.generatedConfig.applications.platform.development.local,
-		"number",
+	assert.deepEqual(result.appUrls, {
+		app: "http://feature.app.mfe.localhost:1355/",
+		platform: "http://feature.platform.mfe.localhost:1355/",
+		www: "http://feature.www.mfe.localhost:1355/",
+	});
+	assert.deepEqual(
+		Object.keys(result.appBridgePorts),
+		["app", "platform", "www"],
 	);
+	assert.equal(typeof result.generatedConfig.applications.platform.development.local, "number");
+	assert.equal(
+		result.generatedConfig.applications.platform.development.local,
+		result.appBridgePorts.platform,
+	);
+	assert.notEqual(result.appBridgePorts.platform, 7777);
+	for (const port of Object.values(result.appBridgePorts)) {
+		assert.equal(port >= 5100 && port <= 8999, true);
+	}
 });
 
 test("selectLocalAppNames defaults to all apps and validates requested local apps", () => {
@@ -241,6 +295,38 @@ test("selectLocalAppNames accepts Vercel app names, package names, and short pac
 	assert.deepEqual(
 		selectLocalAppNames(applications, ["@lightfast/www", "app"]),
 		["lightfast-www", "lightfast-app"],
+	);
+});
+
+test("resolvePortlessApplicationUrl supports Lightfast-style package names and overrides", () => {
+	const root = createLightfastFixtureWorkspace();
+
+	assert.equal(
+		resolvePortlessApplicationUrl({
+			app: "@lightfast/app",
+			cwd: root,
+			env: {
+				PORTLESS_HTTPS: "0",
+				PORTLESS_PORT: "1355",
+				PORTLESS_URL: "http://fix-ui.lightfast.localhost:1355",
+			},
+			getPortlessUrl: () => undefined,
+			detectWorktreePrefix: () => "fix-ui",
+		}),
+		"http://fix-ui.app.lightfast.localhost:1355/",
+	);
+	assert.equal(
+		resolvePortlessApplicationUrl({
+			app: "lightfast-www",
+			cwd: root,
+			env: {
+				PORTLESS_HTTPS: "0",
+				PORTLESS_PORT: "1355",
+			},
+			getPortlessUrl: () => undefined,
+			detectWorktreePrefix: () => undefined,
+		}),
+		"http://docs.lightfast.localhost:1355/",
 	);
 });
 
@@ -288,6 +374,7 @@ test("portless-mfe turbo helpers inject dev env and Turbo loose env mode", () =>
 
 	assert.equal(env.EXISTING, "1");
 	assert.equal(env.MFE_LOCAL_PROXY_PORT, "9123");
+	assert.equal(env.MFE_DISABLE_LOCAL_PROXY_REWRITE, "1");
 	assert.equal(env.PORTLESS_MFE_LOCAL_APPS, "lightfast-app,lightfast-www");
 	assert.equal(env.VC_MICROFRONTENDS_CONFIG, "/repo/apps/app/microfrontends.local.json");
 	assert.equal(env.VC_MICROFRONTENDS_CONFIG_FILE_NAME, "microfrontends.local.json");
@@ -316,6 +403,35 @@ test("resolveRuntimeIdentity is Electron-agnostic and suffixes linked worktrees"
 	assert.equal(main.name, "mfe-desktop");
 	assert.equal(linked.name, "mfe-desktop-fix-ui");
 	assert.equal(linked.worktreePrefix, "fix-ui");
+});
+
+test("resolveRelatedProjectUrl keeps Vercel related-project fallback with local Portless URLs", () => {
+	const root = createLightfastFixtureWorkspace();
+	const localUrl = resolveRelatedProjectUrl({
+		key: "platform",
+		cwd: root,
+		env: {
+			PORTLESS_HTTPS: "0",
+			PORTLESS_PORT: "1355",
+		},
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => "fix-ui",
+	});
+	const productionFallback = resolveRelatedProjectUrl({
+		key: "platform",
+		cwd: root,
+		env: {
+			VERCEL: "1",
+			VERCEL_ENV: "production",
+			PORTLESS_HTTPS: "0",
+			PORTLESS_PORT: "1355",
+		},
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => "fix-ui",
+	});
+
+	assert.equal(localUrl, "http://fix-ui.platform.lightfast.localhost:1355/");
+	assert.equal(productionFallback, "https://lightfast-platform.vercel.app");
 });
 
 function createFixtureWorkspace() {
@@ -359,6 +475,54 @@ function createFixtureWorkspace() {
 		},
 	});
 
+	return root;
+}
+
+function createLightfastFixtureWorkspace() {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "portless-lightfast-"));
+	fs.writeFileSync(
+		path.join(root, "pnpm-workspace.yaml"),
+		'packages:\n  - "apps/*"\n',
+	);
+	writeJson(path.join(root, "portless-mfe.config.json"), {
+		portless: {
+			name: "lightfast",
+			port: 1355,
+			https: false,
+		},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+			apps: {
+				"lightfast-www": {
+					portlessName: "docs.lightfast",
+				},
+			},
+		},
+		relatedProjects: {
+			platform: {
+				projectName: "lightfast-platform",
+				fallbackHost: "https://lightfast-platform.vercel.app",
+			},
+		},
+	});
+	writeJson(path.join(root, "apps/app/package.json"), { name: "@lightfast/app" });
+	writeJson(path.join(root, "apps/www/package.json"), { name: "@lightfast/www" });
+	writeJson(path.join(root, "apps/app/microfrontends.json"), {
+		applications: {
+			"lightfast-app": {
+				packageName: "@lightfast/app",
+				development: {
+					fallback: "lightfast-app.vercel.app",
+				},
+			},
+			"lightfast-www": {
+				packageName: "@lightfast/www",
+				development: {
+					fallback: "lightfast-www.vercel.app",
+				},
+			},
+		},
+	});
 	return root;
 }
 

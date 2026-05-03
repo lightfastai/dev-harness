@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import {
 	addTurboDevEnvMode,
@@ -8,6 +10,7 @@ import {
 	createVercelMicrofrontendsDevConfig,
 	inferLocalAppNames,
 	loadPortlessMfeConfig,
+	resolvePortlessApplicationUrl,
 	resolvePortlessMfeRuntime,
 	resolvePortlessMfeUrl,
 	startPortlessProxy,
@@ -148,7 +151,8 @@ async function handleDev(args) {
 			`MFE proxy port: ${result.localProxyPort}`,
 			`MFE generated config: ${path.relative(config.root, result.generatedConfigPath)}`,
 			`MFE local apps: ${localApps.join(", ")}`,
-			...Object.entries(result.appPorts).map(([appName, port]) => `${appName} port: ${port}`),
+			...Object.entries(result.appUrls).map(([appName, url]) => `${appName} url: ${url}`),
+			...Object.entries(result.appBridgePorts ?? {}).map(([appName, port]) => `${appName} bridge: http://127.0.0.1:${port}`),
 		].join("\n"),
 	);
 
@@ -158,8 +162,8 @@ async function handleDev(args) {
 		env: process.env,
 	});
 	const shouldStartProxy = !isTurboRunCommand(commandArgs);
-	const proxy = shouldStartProxy
-		? await startMicrofrontendsProxy({ config, result, localApps, env: childEnv })
+	const proxyRuntime = shouldStartProxy
+		? await startMicrofrontendsProxyRuntime({ config, result, localApps, env: childEnv })
 		: undefined;
 	const devCommandArgs = disableTurboFrameworkInference(addTurboDevEnvMode(commandArgs));
 	const child = spawn(devCommandArgs[0], devCommandArgs.slice(1), {
@@ -174,22 +178,21 @@ async function handleDev(args) {
 		if (!child.killed) {
 			child.kill(signal);
 		}
-		if (proxy && !proxy.killed) {
-			proxy.kill(signal);
-		}
+		stopMicrofrontendsProxyRuntime(proxyRuntime, signal);
 	};
 
 	for (const signal of ["SIGINT", "SIGTERM"]) {
 		process.on(signal, () => shutdown(signal));
 	}
 
-	if (proxy) {
-		proxy.on("exit", (code, signal) => {
+	if (proxyRuntime) {
+		proxyRuntime.proxy.on("exit", (code, signal) => {
 			if (shuttingDown) {
 				return;
 			}
 
 			shuttingDown = true;
+			closePortlessAppBridges(proxyRuntime.bridges);
 			if (!child.killed) {
 				child.kill("SIGTERM");
 			}
@@ -202,9 +205,7 @@ async function handleDev(args) {
 
 	child.on("exit", (code, signal) => {
 		shuttingDown = true;
-		if (proxy && !proxy.killed) {
-			proxy.kill("SIGTERM");
-		}
+		stopMicrofrontendsProxyRuntime(proxyRuntime, "SIGTERM");
 		if (signal) {
 			process.exit(signalExitCode(signal));
 			return;
@@ -238,7 +239,7 @@ async function handleProxy(args) {
 		localApps,
 		env: process.env,
 	});
-	const proxy = await startMicrofrontendsProxy({
+	const proxyRuntime = await startMicrofrontendsProxyRuntime({
 		config,
 		result,
 		localApps,
@@ -247,13 +248,12 @@ async function handleProxy(args) {
 
 	for (const signal of ["SIGINT", "SIGTERM"]) {
 		process.on(signal, () => {
-			if (!proxy.killed) {
-				proxy.kill(signal);
-			}
+			stopMicrofrontendsProxyRuntime(proxyRuntime, signal);
 		});
 	}
 
-	proxy.on("exit", (code, signal) => {
+	proxyRuntime.proxy.on("exit", (code, signal) => {
+		closePortlessAppBridges(proxyRuntime.bridges);
 		if (signal) {
 			process.exit(signalExitCode(signal));
 			return;
@@ -413,14 +413,23 @@ async function handleRun(args) {
 
 async function handleUrl(args) {
 	const { options } = parseOptions(args);
-	const targetUrl = resolvePortlessMfeUrl({
-		name: options.name,
-		path: options.path,
-		targetUrl: options.targetUrl,
-		cwd: process.cwd(),
-		env: process.env,
-		configPath: options.config,
-	});
+	const targetUrl = options.app
+		? resolvePortlessApplicationUrl({
+			app: options.app,
+			path: options.path,
+			targetUrl: options.targetUrl,
+			cwd: process.cwd(),
+			env: process.env,
+			configPath: options.config,
+		})
+		: resolvePortlessMfeUrl({
+			name: options.name,
+			path: options.path,
+			targetUrl: options.targetUrl,
+			cwd: process.cwd(),
+			env: process.env,
+			configPath: options.config,
+		});
 
 	if (options.json) {
 		console.log(JSON.stringify({ targetUrl }));
@@ -480,6 +489,9 @@ function parseOptions(args) {
 			case "--app-name":
 				options.appName = readOptionValue(args, ++i, arg);
 				break;
+			case "--app":
+				options.app = readOptionValue(args, ++i, arg);
+				break;
 			case "--local-app":
 				options.localApps.push(readOptionValue(args, ++i, arg));
 				break;
@@ -519,6 +531,250 @@ function startMicrofrontendsProxy({ config, result, localApps, env }) {
 			stdio: "inherit",
 		},
 	);
+}
+
+async function startMicrofrontendsProxyRuntime({ config, result, localApps, env }) {
+	const bridges = await startPortlessAppBridges({ result, localApps });
+	try {
+		const proxy = await startMicrofrontendsProxy({ config, result, localApps, env });
+		return { proxy, bridges };
+	} catch (error) {
+		closePortlessAppBridges(bridges);
+		throw error;
+	}
+}
+
+async function startPortlessAppBridges({ result, localApps }) {
+	const bridges = [];
+
+	for (const appName of localApps) {
+		const targetUrl = result.appUrls?.[appName];
+		const port = result.appBridgePorts?.[appName];
+		if (!targetUrl || !port) {
+			continue;
+		}
+
+		const server = http.createServer((req, res) => {
+			proxyToPortlessApp({ appName, targetUrl, req, res });
+		});
+		server.on("clientError", (_error, socket) => {
+			if (socket.writable) {
+				socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+			}
+		});
+		server.on("upgrade", (req, socket, head) => {
+			proxyUpgradeToPortlessApp({ targetUrl, req, socket, head });
+		});
+		await listen(server, port);
+		bridges.push({ appName, port, targetUrl, server, closed: false });
+	}
+
+	return bridges;
+}
+
+function listen(server, port) {
+	return new Promise((resolve, reject) => {
+		const onError = (error) => {
+			server.off("listening", onListening);
+			reject(error);
+		};
+		const onListening = () => {
+			server.off("error", onError);
+			resolve();
+		};
+		server.once("error", onError);
+		server.once("listening", onListening);
+		server.listen(port, "127.0.0.1");
+	});
+}
+
+function proxyToPortlessApp({ appName, targetUrl, req, res }) {
+	const target = new URL(req.url ?? "/", targetUrl);
+	const headers = buildBridgeRequestHeaders(req.headers, target);
+	const requestModule = target.protocol === "https:" ? https : http;
+	const proxyReq = requestModule.request(
+		{
+			protocol: target.protocol,
+			hostname: target.hostname,
+			port: target.port || (target.protocol === "https:" ? 443 : 80),
+			path: `${target.pathname}${target.search}`,
+			method: req.method,
+			headers,
+		},
+		(proxyRes) => {
+			const responseHeaders = stripHopByHopHeaders(proxyRes.headers);
+			proxyRes.on("error", () => {
+				if (!res.destroyed) {
+					res.destroy();
+				}
+			});
+			safeWriteHead(res, proxyRes.statusCode ?? 502, responseHeaders);
+			proxyRes.pipe(res);
+		},
+	);
+
+	proxyReq.on("error", (error) => {
+		if (!res.destroyed && !res.writableEnded) {
+			if (!res.headersSent) {
+				safeWriteHead(res, 502, { "Content-Type": "text/plain" });
+			}
+			safeEnd(res, `Error proxying ${appName} through Portless: ${error.message}`);
+		}
+	});
+	req.on("error", () => {
+		proxyReq.destroy();
+	});
+	res.on("error", () => {
+		proxyReq.destroy();
+	});
+	res.on("close", () => {
+		if (!proxyReq.destroyed) {
+			proxyReq.destroy();
+		}
+	});
+	req.pipe(proxyReq);
+}
+
+function proxyUpgradeToPortlessApp({ targetUrl, req, socket, head }) {
+	socket.on("error", () => {
+		socket.destroy();
+	});
+
+	const target = new URL(req.url ?? "/", targetUrl);
+	const headers = buildBridgeRequestHeaders(req.headers, target);
+	const requestModule = target.protocol === "https:" ? https : http;
+	const proxyReq = requestModule.request({
+		protocol: target.protocol,
+		hostname: target.hostname,
+		port: target.port || (target.protocol === "https:" ? 443 : 80),
+		path: `${target.pathname}${target.search}`,
+		method: req.method,
+		headers,
+	});
+
+	proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
+		proxySocket.on("error", () => {
+			socket.destroy();
+		});
+		let response = `HTTP/1.1 ${proxyRes.statusCode ?? 101} ${proxyRes.statusMessage ?? "Switching Protocols"}\r\n`;
+		for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
+			response += `${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}\r\n`;
+		}
+		response += "\r\n";
+		socket.write(response);
+		if (proxyHead.length) {
+			socket.write(proxyHead);
+		}
+		if (head.length) {
+			proxySocket.write(head);
+		}
+		socket.pipe(proxySocket);
+		proxySocket.pipe(socket);
+	});
+	proxyReq.on("response", (proxyRes) => {
+		writeRawHttpResponse(socket, proxyRes, {
+			...stripHopByHopHeaders(proxyRes.headers),
+			connection: "close",
+		});
+		proxyRes.pipe(socket);
+	});
+	proxyReq.on("error", () => {
+		socket.destroy();
+	});
+	proxyReq.end();
+}
+
+function buildBridgeRequestHeaders(sourceHeaders, target) {
+	const headers = stripHopByHopHeaders(sourceHeaders);
+	deleteHeader(headers, "x-portless");
+	deleteHeader(headers, "x-portless-hops");
+	headers.host = target.host;
+	return headers;
+}
+
+function stripHopByHopHeaders(sourceHeaders) {
+	const blockedHeaders = new Set([
+		"connection",
+		"keep-alive",
+		"proxy-connection",
+		"te",
+		"trailer",
+		"transfer-encoding",
+		"upgrade",
+	]);
+	const headers = {};
+	for (const [key, value] of Object.entries(sourceHeaders)) {
+		if (value !== undefined && !blockedHeaders.has(key.toLowerCase())) {
+			headers[key] = value;
+		}
+	}
+	return headers;
+}
+
+function deleteHeader(headers, headerName) {
+	const normalizedHeaderName = headerName.toLowerCase();
+	for (const key of Object.keys(headers)) {
+		if (key.toLowerCase() === normalizedHeaderName) {
+			delete headers[key];
+		}
+	}
+}
+
+function writeRawHttpResponse(socket, proxyRes, headers) {
+	let response = `HTTP/1.1 ${proxyRes.statusCode ?? 502} ${proxyRes.statusMessage ?? "Bad Gateway"}\r\n`;
+	for (const [key, value] of Object.entries(headers)) {
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				response += `${key}: ${item}\r\n`;
+			}
+		} else {
+			response += `${key}: ${value}\r\n`;
+		}
+	}
+	response += "\r\n";
+	socket.write(response);
+}
+
+function safeWriteHead(res, statusCode, headers) {
+	if (res.destroyed || res.headersSent) {
+		return;
+	}
+	try {
+		res.writeHead(statusCode, headers);
+	} catch {
+		res.destroy();
+	}
+}
+
+function safeEnd(res, body) {
+	if (res.destroyed || res.writableEnded) {
+		return;
+	}
+	try {
+		res.end(body);
+	} catch {
+		res.destroy();
+	}
+}
+
+function stopMicrofrontendsProxyRuntime(runtime, signal) {
+	if (!runtime) {
+		return;
+	}
+	if (!runtime.proxy.killed) {
+		runtime.proxy.kill(signal);
+	}
+	closePortlessAppBridges(runtime.bridges);
+}
+
+function closePortlessAppBridges(bridges = []) {
+	for (const bridge of bridges) {
+		if (bridge.closed) {
+			continue;
+		}
+		bridge.closed = true;
+		bridge.server.close();
+	}
 }
 
 function buildMicrofrontendsProxyCommands(result, localApps) {
@@ -629,7 +885,7 @@ function printHelp() {
   portless-mfe dev [--local-app <name>] -- <command> [...args]
   portless-mfe run [--name <name>] [--local-app <name>] -- <command> [...args]
   portless-mfe proxy [--local-app <name>]
-  portless-mfe url [--path <path>] [--json]
+  portless-mfe url [--app <name>] [--path <path>] [--json]
   portless-mfe identity [--path <path>] [--app-name <name>] [--json]
 
 Options:

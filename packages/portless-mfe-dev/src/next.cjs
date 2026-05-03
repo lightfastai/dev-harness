@@ -4,6 +4,7 @@ const path = require("node:path");
 const CONFIG_FILENAMES = ["portless-mfe.config.json"];
 const DEFAULT_PORTLESS_NAME = "mfe";
 const DEFAULT_PORTLESS_TLD = "localhost";
+const DEFAULT_MFE_CONFIG = "microfrontends.json";
 
 function withPortlessMfeDev(nextConfig = {}, options = {}) {
 	const origins = options.origins ?? getPortlessMfeDevOrigins({
@@ -47,11 +48,35 @@ function getPortlessMfeDevOrigins({
 	}
 
 	const portless = normalized?.portless ?? {};
+	const microfrontends = normalized?.microfrontends ?? {};
 	const portlessName = name ?? portless.name ?? DEFAULT_PORTLESS_NAME;
 	const portlessTld = tld ?? env.PORTLESS_TLD ?? portless.tld ?? DEFAULT_PORTLESS_TLD;
-	const baseHost = `${portlessName}.${portlessTld}`;
+	const portlessNames = [portlessName];
 
-	return includeWildcard ? [baseHost, `*.${baseHost}`] : [baseHost];
+	if (normalized) {
+		const originConfig = {
+			...normalized,
+			portless: {
+				...normalized.portless,
+				name: portlessName,
+			},
+		};
+		const sourceConfig = readMicrofrontendsConfigIfAvailable({
+			root: normalized.root ?? cwd,
+			microfrontends,
+			portless: { name: portlessName },
+		});
+		for (const [appName, appConfig] of Object.entries(sourceConfig?.applications ?? {})) {
+			portlessNames.push(resolveApplicationPortlessName(appName, appConfig, originConfig));
+		}
+	}
+
+	return unique(
+		portlessNames.flatMap((value) => {
+			const host = `${value}.${portlessTld}`;
+			return includeWildcard ? [host, `*.${host}`] : [host];
+		}),
+	);
 }
 
 function resolveOptionalPackageConfig({ cwd, config, configPath }) {
@@ -66,7 +91,11 @@ function resolveOptionalPackageConfig({ cwd, config, configPath }) {
 		return undefined;
 	}
 
-	return JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
+	return {
+		...JSON.parse(fs.readFileSync(resolvedPath, "utf8")),
+		root: path.dirname(resolvedPath),
+		configPath: resolvedPath,
+	};
 }
 
 function findConfigFile(cwd) {
@@ -86,6 +115,66 @@ function findConfigFile(cwd) {
 		}
 		dir = parent;
 	}
+}
+
+function readMicrofrontendsConfigIfAvailable(config) {
+	try {
+		const sourcePath = path.resolve(
+			config.root ?? process.cwd(),
+			config.microfrontends?.config ?? DEFAULT_MFE_CONFIG,
+		);
+		return JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+	} catch {
+		return undefined;
+	}
+}
+
+function resolveApplicationPortlessName(appName, appConfig = {}, config = {}) {
+	const override = normalizeApplicationOverride(config.microfrontends?.apps?.[appName]);
+	if (override.portlessName) {
+		return normalizePortlessName(override.portlessName);
+	}
+
+	const packageName = appConfig.packageName ?? appName;
+	return normalizePortlessName(`${packageShortName(packageName)}.${config.portless?.name ?? DEFAULT_PORTLESS_NAME}`);
+}
+
+function normalizeApplicationOverride(value) {
+	if (!value) {
+		return {};
+	}
+	if (typeof value === "string") {
+		return { dir: value };
+	}
+	if (typeof value === "object" && !Array.isArray(value)) {
+		return {
+			dir: value.dir ?? value.path,
+			portlessName: value.portlessName,
+		};
+	}
+	return {};
+}
+
+function normalizePortlessName(value) {
+	return String(value)
+		.split(".")
+		.map((label) => sanitizeHostnameLabels(label))
+		.filter(Boolean)
+		.join(".");
+}
+
+function sanitizeHostnameLabels(value) {
+	return value
+		.split(".")
+		.join("-")
+		.toLowerCase()
+		.replace(/[^a-z0-9-]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.replace(/--+/g, "-");
+}
+
+function packageShortName(name) {
+	return name.split("/").pop() ?? name;
 }
 
 function unique(values) {

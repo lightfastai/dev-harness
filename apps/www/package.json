@@ -1,8 +1,9 @@
 {
   "name": "www",
   "private": true,
+  "portless": "www.mfe",
   "scripts": {
-    "dev": "next dev --port $(microfrontends port)",
+    "dev": "portless run next dev",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
