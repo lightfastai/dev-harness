@@ -1,0 +1,22 @@
+{
+  "name": "@repo/portless-mfe-dev",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "portless-mfe": "./bin/portless-mfe.mjs"
+  },
+  "exports": {
+    ".": "./src/public.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "typecheck": "node --check src/index.js && node --check src/public.js && node --check bin/portless-mfe.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "portless": "^0.12.0"
+  }
+}

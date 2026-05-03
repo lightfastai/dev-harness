@@ -6,16 +6,16 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "PORTLESS_PORT=${PORTLESS_PORT:-1355} PORTLESS_HTTPS=${PORTLESS_HTTPS:-0} pnpm portless:proxy && PORTLESS_PORT=${PORTLESS_PORT:-1355} PORTLESS_HTTPS=${PORTLESS_HTTPS:-0} portless run --name mfe pnpm dev:apps",
-    "dev:apps": "node scripts/dev-mfe-worktree.mjs turbo run dev --ui=tui --filter=app --filter=www",
-    "dev:app": "node scripts/dev-mfe-worktree.mjs pnpm --filter app dev",
+    "dev": "portless-mfe run -- turbo run dev --ui=tui --filter=app --filter=www",
+    "dev:apps": "portless-mfe dev -- turbo run dev --ui=tui --filter=app --filter=www",
+    "dev:app": "portless-mfe dev -- pnpm --filter app dev",
     "dev:desktop": "pnpm --filter desktop dev",
-    "dev:www": "node scripts/dev-mfe-worktree.mjs pnpm --filter www dev",
-    "mfe:url": "PORTLESS_PORT=${PORTLESS_PORT:-1355} PORTLESS_HTTPS=${PORTLESS_HTTPS:-0} portless get mfe",
-    "portless:proxy": "if [ \"${PORTLESS_HTTPS:-0}\" = \"0\" ]; then portless proxy start --port ${PORTLESS_PORT:-1355} --no-tls; else portless proxy start --port ${PORTLESS_PORT:-1355} --https; fi",
+    "dev:www": "portless-mfe dev -- pnpm --filter www dev",
+    "mfe:url": "portless-mfe url",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
+    "@repo/portless-mfe-dev": "workspace:*",
     "portless": "^0.12.0",
     "turbo": "~2.9.8",
     "typescript": "^5.0.0"

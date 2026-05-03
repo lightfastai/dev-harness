@@ -6,9 +6,11 @@ const ROOT = path.resolve(__dirname, "../..");
 const PORTLESS_NAME = process.env.DESKTOP_PORTLESS_NAME || "mfe";
 const TARGET_PATH = process.env.DESKTOP_TARGET_PATH || "/sign-in";
 const QUIT_AFTER_LOAD = process.env.DESKTOP_QUIT_AFTER_LOAD === "1";
+const DESKTOP_BASE_NAME = "mfe-desktop";
 
-const TARGET = resolveTarget();
-const NAME = process.env.DESKTOP_NAME || defaultDesktopName(TARGET);
+const IDENTITY = resolveIdentity();
+const TARGET = IDENTITY.targetUrl;
+const NAME = process.env.DESKTOP_NAME || IDENTITY.name;
 
 app.setName(NAME);
 app.setPath("userData", path.join(app.getPath("appData"), NAME));
@@ -17,25 +19,25 @@ function emit(event, payload) {
 	process.stdout.write(`DESKTOP_EVENT ${event} ${JSON.stringify(payload)}\n`);
 }
 
-function resolveTarget() {
+function resolveIdentity() {
+	const args = [
+		"identity",
+		"--json",
+		"--name",
+		PORTLESS_NAME,
+		"--path",
+		TARGET_PATH,
+		"--app-name",
+		DESKTOP_BASE_NAME,
+	];
+
 	if (process.env.DESKTOP_TARGET_URL) {
-		return process.env.DESKTOP_TARGET_URL;
+		args.push("--target-url", process.env.DESKTOP_TARGET_URL);
 	}
 
-	const baseUrl = resolvePortlessUrl(PORTLESS_NAME);
-	if (baseUrl) {
-		return withTargetPath(baseUrl, TARGET_PATH);
-	}
-
-	const protocol = process.env.PORTLESS_HTTPS === "0" ? "http" : "https";
-	const explicitPort = process.env.PORTLESS_PORT ? `:${process.env.PORTLESS_PORT}` : "";
-	return withTargetPath(`${protocol}://${PORTLESS_NAME}.localhost${explicitPort}`, TARGET_PATH);
-}
-
-function resolvePortlessUrl(name) {
 	const commands = [
-		["portless", ["get", name]],
-		["pnpm", ["exec", "portless", "get", name]],
+		["portless-mfe", args],
+		["pnpm", ["exec", "portless-mfe", ...args]],
 	];
 
 	for (const [command, args] of commands) {
@@ -47,50 +49,14 @@ function resolvePortlessUrl(name) {
 			}).trim();
 
 			if (output) {
-				return output;
+				return JSON.parse(output);
 			}
 		} catch {
-			// Try the next command/fallback. The desktop app can still use an explicit URL.
+			// Try the next command. URL and identity resolution lives in portless-mfe.
 		}
 	}
 
-	return undefined;
-}
-
-function withTargetPath(baseUrl, targetPath) {
-	const normalizedPath = targetPath.startsWith("/") ? targetPath : `/${targetPath}`;
-	return new URL(normalizedPath, baseUrl).toString();
-}
-
-function defaultDesktopName(target) {
-	const baseName = "mfe-desktop";
-
-	try {
-		const host = new URL(target).hostname;
-		const suffix = `${PORTLESS_NAME}.localhost`;
-
-		if (host === suffix) {
-			return baseName;
-		}
-
-		if (host.endsWith(`.${suffix}`)) {
-			const prefix = host.slice(0, -`.${suffix}`.length);
-			const safePrefix = prefix
-				.split(".")
-				.join("-")
-				.replace(/[^a-z0-9-]+/gi, "-")
-				.replace(/^-+|-+$/g, "")
-				.toLowerCase();
-
-			if (safePrefix) {
-				return `${baseName}-${safePrefix}`;
-			}
-		}
-	} catch {
-		// Keep the base app name if the target is not a URL.
-	}
-
-	return baseName;
+	throw new Error("Unable to resolve desktop target via portless-mfe identity.");
 }
 
 function fetchViaNet(url) {
