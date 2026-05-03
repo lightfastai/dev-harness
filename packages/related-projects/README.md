@@ -14,6 +14,41 @@ The package bin imports `dist/cli.js`, so build the package before using the CLI
 pnpm --filter @lightfastai/related-projects build
 ```
 
+## Publishing
+
+This package is set up for local npm publishing. There is no GitHub Actions release flow.
+
+Before publishing, update the package version in `packages/related-projects/package.json`, then run the local release check from the repo root:
+
+```sh
+pnpm related-projects:release:check
+```
+
+The release check typechecks, runs the test suite, builds `dist`, and verifies the npm tarball contents with `npm pack --dry-run`.
+
+To inspect the publish without uploading:
+
+```sh
+pnpm related-projects:publish:dry-run
+```
+
+To publish to npm:
+
+```sh
+npm whoami
+pnpm related-projects:publish
+```
+
+The package publishes as public to `https://registry.npmjs.org/` using the `latest` dist tag unless a different tag is supplied directly to `npm publish`.
+
+## Entrypoints
+
+Use `@lightfastai/related-projects/next` from `next.config.ts`. It is the only entrypoint that is safe for Next config loading and supports both ESM `import` and CommonJS `require`.
+
+Use `@lightfastai/related-projects/related-projects` from ESM app or server runtime modules. It intentionally does not provide a CommonJS export and should not be loaded from `next.config.ts`.
+
+The root `@lightfastai/related-projects` entrypoint exports the Portless and Microfrontends runtime helpers for ESM consumers.
+
 ## Configuration
 
 The config loader searches upward from the current working directory for `related-projects.json`. Pass `--config <path>` to the CLI, or `configPath` to API helpers, to use a specific file.
@@ -76,6 +111,13 @@ pnpm mfe:url
 ```
 
 Those scripts build this package first, then call `portless-mfe`.
+
+App dev scripts that run a local Vercel Microfrontends app through Portless should pass the app bridge port from `microfrontends port`:
+
+```sh
+portless run --app-port $(microfrontends port) next dev --turbo
+portless run --app-port $(microfrontends port) next dev --turbopack
+```
 
 Available commands:
 

@@ -3,17 +3,16 @@ import type { GetPortlessMfeDevOriginsOptions } from "./index.js";
 
 export interface NextConfigWithPortlessMfeDev {
 	allowedDevOrigins?: string[];
-	[key: string]: unknown;
 }
 
 export interface WithPortlessMfeDevOptions extends GetPortlessMfeDevOriginsOptions {
 	origins?: string[];
 }
 
-export function withPortlessMfeDev<T extends NextConfigWithPortlessMfeDev>(
-	nextConfig: T = {} as T,
+export function withPortlessMfeDev<T extends object = object>(
+	nextConfig: T & NextConfigWithPortlessMfeDev = {} as T & NextConfigWithPortlessMfeDev,
 	options: WithPortlessMfeDevOptions = {},
-): T {
+): T & NextConfigWithPortlessMfeDev {
 	const origins = options.origins ?? getPortlessMfeDevOrigins({
 		...options,
 		allowMissingConfig: true,
@@ -29,7 +28,7 @@ export function withPortlessMfeDev<T extends NextConfigWithPortlessMfeDev>(
 			...(nextConfig.allowedDevOrigins ?? []),
 			...origins,
 		]),
-	} as T;
+	} as T & NextConfigWithPortlessMfeDev;
 }
 
 export { getPortlessMfeDevOrigins };

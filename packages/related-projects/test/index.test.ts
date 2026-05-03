@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -25,6 +26,11 @@ import { resolveRelatedProjectUrl } from "../src/related-projects.js";
 import type { MicrofrontendsSourceConfig } from "../src/index.js";
 
 const require = createRequire(import.meta.url);
+
+interface NextConfigLike {
+	reactStrictMode?: boolean;
+	allowedDevOrigins?: string[];
+}
 
 test("loadPortlessMfeConfig reads JSON config and applies fixed defaults", async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "portless-mfe-config-"));
@@ -195,6 +201,16 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 		),
 		{ reactStrictMode: true },
 	);
+
+	const nextConfigLike: NextConfigLike = { reactStrictMode: true };
+	const wrappedNextConfigLike: NextConfigLike = withPortlessMfeDev(
+		nextConfigLike,
+		{ origins: ["typed.localhost"] },
+	);
+	assert.deepEqual(wrappedNextConfigLike, {
+		reactStrictMode: true,
+		allowedDevOrigins: ["typed.localhost"],
+	});
 });
 
 test("CommonJS Next wrapper exports the same helpers", () => {
@@ -209,6 +225,54 @@ test("CommonJS Next wrapper exports the same helpers", () => {
 		).allowedDevOrigins,
 		["custom.localhost", "mfe.localhost"],
 	);
+});
+
+test("package export map supports intended ESM imports", () => {
+	const result = runNode([
+		"--input-type=module",
+		"--eval",
+		`
+			const publicApi = await import("@lightfastai/related-projects");
+			const nextApi = await import("@lightfastai/related-projects/next");
+			const relatedProjectsApi = await import("@lightfastai/related-projects/related-projects");
+			if (typeof publicApi.resolvePortlessMfeRuntime !== "function") throw new Error("missing public API");
+			if (typeof nextApi.withPortlessMfeDev !== "function") throw new Error("missing next API");
+			if (typeof relatedProjectsApi.resolveRelatedProjectUrl !== "function") throw new Error("missing related-projects API");
+		`,
+	]);
+
+	assertNodeOk(result);
+});
+
+test("package export map supports CommonJS require for Next helpers", () => {
+	const result = runNode([
+		"--eval",
+		`
+			const nextApi = require("@lightfastai/related-projects/next");
+			if (typeof nextApi.withPortlessMfeDev !== "function") throw new Error("missing next API");
+		`,
+	]);
+
+	assertNodeOk(result);
+});
+
+test("package export map keeps related-projects unsupported for CommonJS require", () => {
+	const result = runNode([
+		"--eval",
+		`
+			try {
+				require("@lightfastai/related-projects/related-projects");
+				throw new Error("expected CommonJS require to fail");
+			} catch (error) {
+				if (error && error.code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
+					process.exit(0);
+				}
+				throw error;
+			}
+		`,
+	]);
+
+	assertNodeOk(result);
 });
 
 test("choosePort scans upward from deterministic candidate when a port is busy", async () => {
@@ -553,4 +617,19 @@ function createLightfastFixtureWorkspace() {
 function writeJson(filePath: string, value: unknown) {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function runNode(args: string[]) {
+	return spawnSync(process.execPath, args, {
+		cwd: process.cwd(),
+		encoding: "utf8",
+	});
+}
+
+function assertNodeOk(result: ReturnType<typeof runNode>) {
+	assert.equal(
+		result.status,
+		0,
+		[result.stdout, result.stderr].filter(Boolean).join("\n"),
+	);
 }

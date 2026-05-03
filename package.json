@@ -17,6 +17,9 @@
     "dev:www": "portless-mfe turbo run dev --filter=www",
     "premfe:url": "pnpm --filter @lightfastai/related-projects build",
     "mfe:url": "portless-mfe url",
+    "related-projects:release:check": "pnpm --filter @lightfastai/related-projects run release:check",
+    "related-projects:publish:dry-run": "pnpm --filter @lightfastai/related-projects run publish:dry-run",
+    "related-projects:publish": "pnpm --filter @lightfastai/related-projects run publish:npm",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
