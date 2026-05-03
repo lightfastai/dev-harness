@@ -13,3 +13,5 @@ coverage/
 .env
 .env.*
 !.env.example
+
+apps/*/microfrontends.local.json

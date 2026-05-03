@@ -7,10 +7,10 @@
   },
   "scripts": {
     "dev": "PORTLESS_PORT=${PORTLESS_PORT:-1355} PORTLESS_HTTPS=${PORTLESS_HTTPS:-0} pnpm portless:proxy && PORTLESS_PORT=${PORTLESS_PORT:-1355} PORTLESS_HTTPS=${PORTLESS_HTTPS:-0} portless run --name mfe pnpm dev:apps",
-    "dev:apps": "MFE_LOCAL_PROXY_PORT=${PORT:-3024} turbo run dev --ui=tui --filter=app --filter=www",
-    "dev:app": "pnpm --filter app dev",
+    "dev:apps": "node scripts/dev-mfe-worktree.mjs turbo run dev --ui=tui --filter=app --filter=www",
+    "dev:app": "node scripts/dev-mfe-worktree.mjs pnpm --filter app dev",
     "dev:desktop": "pnpm --filter desktop dev",
-    "dev:www": "pnpm --filter www dev",
+    "dev:www": "node scripts/dev-mfe-worktree.mjs pnpm --filter www dev",
     "mfe:url": "PORTLESS_PORT=${PORTLESS_PORT:-1355} PORTLESS_HTTPS=${PORTLESS_HTTPS:-0} portless get mfe",
     "portless:proxy": "if [ \"${PORTLESS_HTTPS:-0}\" = \"0\" ]; then portless proxy start --port ${PORTLESS_PORT:-1355} --no-tls; else portless proxy start --port ${PORTLESS_PORT:-1355} --https; fi",
     "typecheck": "turbo run typecheck"

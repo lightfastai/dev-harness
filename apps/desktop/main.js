@@ -2,13 +2,13 @@ const { app, BrowserWindow, net } = require("electron");
 const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 
-const NAME = process.env.DESKTOP_NAME || "mfe-desktop";
 const ROOT = path.resolve(__dirname, "../..");
 const PORTLESS_NAME = process.env.DESKTOP_PORTLESS_NAME || "mfe";
 const TARGET_PATH = process.env.DESKTOP_TARGET_PATH || "/sign-in";
 const QUIT_AFTER_LOAD = process.env.DESKTOP_QUIT_AFTER_LOAD === "1";
 
 const TARGET = resolveTarget();
+const NAME = process.env.DESKTOP_NAME || defaultDesktopName(TARGET);
 
 app.setName(NAME);
 app.setPath("userData", path.join(app.getPath("appData"), NAME));
@@ -60,6 +60,37 @@ function resolvePortlessUrl(name) {
 function withTargetPath(baseUrl, targetPath) {
 	const normalizedPath = targetPath.startsWith("/") ? targetPath : `/${targetPath}`;
 	return new URL(normalizedPath, baseUrl).toString();
+}
+
+function defaultDesktopName(target) {
+	const baseName = "mfe-desktop";
+
+	try {
+		const host = new URL(target).hostname;
+		const suffix = `${PORTLESS_NAME}.localhost`;
+
+		if (host === suffix) {
+			return baseName;
+		}
+
+		if (host.endsWith(`.${suffix}`)) {
+			const prefix = host.slice(0, -`.${suffix}`.length);
+			const safePrefix = prefix
+				.split(".")
+				.join("-")
+				.replace(/[^a-z0-9-]+/gi, "-")
+				.replace(/^-+|-+$/g, "")
+				.toLowerCase();
+
+			if (safePrefix) {
+				return `${baseName}-${safePrefix}`;
+			}
+		}
+	} catch {
+		// Keep the base app name if the target is not a URL.
+	}
+
+	return baseName;
 }
 
 function fetchViaNet(url) {
