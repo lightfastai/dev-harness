@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": ".turbo/test-dist",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.cts", "test/**/*.ts"],
+  "exclude": ["dist", ".turbo/test-dist", "node_modules"]
+}

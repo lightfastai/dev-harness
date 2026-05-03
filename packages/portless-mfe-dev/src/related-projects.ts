@@ -5,6 +5,27 @@ import {
 	resolvePortlessUrl,
 	withTargetPath,
 } from "./index.js";
+import type {
+	DetectWorktreePrefix,
+	Env,
+	GetPortlessUrl,
+	NormalizedPortlessMfeConfig,
+	PortlessMfeConfig,
+} from "./index.js";
+
+export interface ResolveRelatedProjectUrlOptions {
+	key?: string;
+	projectName?: string;
+	fallbackHost?: string;
+	portlessName?: string;
+	path?: string;
+	cwd?: string;
+	env?: Env;
+	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
+	configPath?: string;
+	getPortlessUrl?: GetPortlessUrl;
+	detectWorktreePrefix?: DetectWorktreePrefix;
+}
 
 export function resolveRelatedProjectUrl({
 	key,
@@ -18,7 +39,7 @@ export function resolveRelatedProjectUrl({
 	configPath,
 	getPortlessUrl,
 	detectWorktreePrefix,
-} = {}) {
+}: ResolveRelatedProjectUrlOptions = {}): string {
 	const normalized = resolveConfig({ cwd, config, configPath });
 	const relatedConfig = key ? normalized.relatedProjects?.[key] : undefined;
 	const resolvedKey = key ?? projectName ?? portlessName;
@@ -53,7 +74,15 @@ export function resolveRelatedProjectUrl({
 	return resolvedPath ? withTargetPath(relatedUrl, resolvedPath) : relatedUrl;
 }
 
-function resolveConfig({ cwd, config, configPath }) {
+function resolveConfig({
+	cwd,
+	config,
+	configPath,
+}: {
+	cwd: string;
+	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
+	configPath?: string;
+}): NormalizedPortlessMfeConfig {
 	if (config) {
 		return normalizePackageConfig(config, {
 			root: config.root ?? cwd,
@@ -68,7 +97,7 @@ function resolveConfig({ cwd, config, configPath }) {
 	}
 }
 
-function isVercelRuntime(env) {
+function isVercelRuntime(env: Env): boolean {
 	const vercelEnv = env.VERCEL_ENV ?? env.NEXT_PUBLIC_VERCEL_ENV;
 	return env.VERCEL === "1" || vercelEnv === "production" || vercelEnv === "preview";
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,6 +22,9 @@ import {
 } from "../src/index.js";
 import { withPortlessMfeDev } from "../src/next.js";
 import { resolveRelatedProjectUrl } from "../src/related-projects.js";
+import type { MicrofrontendsSourceConfig } from "../src/index.js";
+
+const require = createRequire(import.meta.url);
 
 test("loadPortlessMfeConfig reads JSON config and applies fixed defaults", async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "portless-mfe-config-"));
@@ -193,8 +197,22 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 	);
 });
 
+test("CommonJS Next wrapper exports the same helpers", () => {
+	const cjsNext = require("../src/next.cjs") as typeof import("../src/next.js");
+
+	assert.equal(typeof cjsNext.withPortlessMfeDev, "function");
+	assert.equal(typeof cjsNext.getPortlessMfeDevOrigins, "function");
+	assert.deepEqual(
+		cjsNext.withPortlessMfeDev(
+			{ allowedDevOrigins: ["custom.localhost"] },
+			{ origins: ["mfe.localhost"] },
+		).allowedDevOrigins,
+		["custom.localhost", "mfe.localhost"],
+	);
+});
+
 test("choosePort scans upward from deterministic candidate when a port is busy", async () => {
-	const checked = [];
+	const checked: number[] = [];
 	const port = await choosePort("scan-seed", {
 		min: 5100,
 		max: 5103,
@@ -243,10 +261,7 @@ test("createVercelMicrofrontendsDevConfig infers arbitrary app directories", asy
 	assert.equal(result.appDirs.app, path.join(root, "apps/app"));
 	assert.equal(result.appDirs.platform, path.join(root, "apps/platform"));
 	assert.equal(result.appDirs.www, path.join(root, "apps/www"));
-	assert.equal(
-		result.generatedConfig.options.localProxyPort,
-		7777,
-	);
+	assert.equal(result.generatedConfig.options?.localProxyPort, 7777);
 	assert.deepEqual(result.appUrls, {
 		app: "http://feature.app.mfe.localhost:1355/",
 		platform: "http://feature.platform.mfe.localhost:1355/",
@@ -256,9 +271,18 @@ test("createVercelMicrofrontendsDevConfig infers arbitrary app directories", asy
 		Object.keys(result.appBridgePorts),
 		["app", "platform", "www"],
 	);
-	assert.equal(typeof result.generatedConfig.applications.platform.development.local, "number");
+	const generatedConfig = result.generatedConfig as MicrofrontendsSourceConfig & {
+		applications: {
+			platform: {
+				development: {
+					local: number;
+				};
+			};
+		};
+	};
+	assert.equal(typeof generatedConfig.applications.platform.development.local, "number");
 	assert.equal(
-		result.generatedConfig.applications.platform.development.local,
+		generatedConfig.applications.platform.development.local,
 		result.appBridgePorts.platform,
 	);
 	assert.notEqual(result.appBridgePorts.platform, 7777);
@@ -526,7 +550,7 @@ function createLightfastFixtureWorkspace() {
 	return root;
 }
 
-function writeJson(filePath, value) {
+function writeJson(filePath: string, value: unknown) {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }

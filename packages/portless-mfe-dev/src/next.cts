@@ -6,7 +6,43 @@ const DEFAULT_PORTLESS_NAME = "mfe";
 const DEFAULT_PORTLESS_TLD = "localhost";
 const DEFAULT_MFE_CONFIG = "microfrontends.json";
 
-function withPortlessMfeDev(nextConfig = {}, options = {}) {
+type Env = Record<string, string | undefined>;
+type ApplicationConfig = {
+	packageName?: string;
+	[key: string]: any;
+};
+type PackageConfig = {
+	root?: string;
+	configPath?: string;
+	portless?: {
+		name?: string;
+		tld?: string;
+	};
+	microfrontends?: {
+		config?: string;
+		apps?: Record<string, unknown>;
+	};
+};
+type NextConfig = {
+	allowedDevOrigins?: string[];
+	[key: string]: any;
+};
+type OriginsOptions = {
+	name?: string;
+	tld?: string;
+	cwd?: string;
+	env?: Env;
+	config?: PackageConfig;
+	configPath?: string;
+	includeWildcard?: boolean;
+	allowMissingConfig?: boolean;
+	origins?: string[];
+};
+
+function withPortlessMfeDev<T extends NextConfig>(
+	nextConfig: T = {} as T,
+	options: OriginsOptions = {},
+): T {
 	const origins = options.origins ?? getPortlessMfeDevOrigins({
 		...options,
 		allowMissingConfig: true,
@@ -22,7 +58,7 @@ function withPortlessMfeDev(nextConfig = {}, options = {}) {
 			...(nextConfig.allowedDevOrigins ?? []),
 			...origins,
 		]),
-	};
+	} as T;
 }
 
 function getPortlessMfeDevOrigins({
@@ -34,7 +70,7 @@ function getPortlessMfeDevOrigins({
 	configPath,
 	includeWildcard = true,
 	allowMissingConfig = false,
-} = {}) {
+}: OriginsOptions = {}): string[] {
 	const normalized = resolveOptionalPackageConfig({ cwd, config, configPath });
 
 	if (!normalized && !name) {
@@ -79,7 +115,15 @@ function getPortlessMfeDevOrigins({
 	);
 }
 
-function resolveOptionalPackageConfig({ cwd, config, configPath }) {
+function resolveOptionalPackageConfig({
+	cwd,
+	config,
+	configPath,
+}: {
+	cwd: string;
+	config?: PackageConfig;
+	configPath?: string;
+}): PackageConfig | undefined {
 	if (config) {
 		return config;
 	}
@@ -98,7 +142,7 @@ function resolveOptionalPackageConfig({ cwd, config, configPath }) {
 	};
 }
 
-function findConfigFile(cwd) {
+function findConfigFile(cwd: string): string | undefined {
 	let dir = path.resolve(cwd);
 
 	for (;;) {
@@ -117,7 +161,7 @@ function findConfigFile(cwd) {
 	}
 }
 
-function readMicrofrontendsConfigIfAvailable(config) {
+function readMicrofrontendsConfigIfAvailable(config: PackageConfig): { applications?: Record<string, ApplicationConfig> } | undefined {
 	try {
 		const sourcePath = path.resolve(
 			config.root ?? process.cwd(),
@@ -129,7 +173,11 @@ function readMicrofrontendsConfigIfAvailable(config) {
 	}
 }
 
-function resolveApplicationPortlessName(appName, appConfig = {}, config = {}) {
+function resolveApplicationPortlessName(
+	appName: string,
+	appConfig: ApplicationConfig = {},
+	config: PackageConfig = {},
+): string {
 	const override = normalizeApplicationOverride(config.microfrontends?.apps?.[appName]);
 	if (override.portlessName) {
 		return normalizePortlessName(override.portlessName);
@@ -139,7 +187,7 @@ function resolveApplicationPortlessName(appName, appConfig = {}, config = {}) {
 	return normalizePortlessName(`${packageShortName(packageName)}.${config.portless?.name ?? DEFAULT_PORTLESS_NAME}`);
 }
 
-function normalizeApplicationOverride(value) {
+function normalizeApplicationOverride(value: unknown): { dir?: string; portlessName?: string } {
 	if (!value) {
 		return {};
 	}
@@ -147,15 +195,16 @@ function normalizeApplicationOverride(value) {
 		return { dir: value };
 	}
 	if (typeof value === "object" && !Array.isArray(value)) {
+		const override = value as { dir?: string; path?: string; portlessName?: string };
 		return {
-			dir: value.dir ?? value.path,
-			portlessName: value.portlessName,
+			dir: override.dir ?? override.path,
+			portlessName: override.portlessName,
 		};
 	}
 	return {};
 }
 
-function normalizePortlessName(value) {
+function normalizePortlessName(value: string): string {
 	return String(value)
 		.split(".")
 		.map((label) => sanitizeHostnameLabels(label))
@@ -163,7 +212,7 @@ function normalizePortlessName(value) {
 		.join(".");
 }
 
-function sanitizeHostnameLabels(value) {
+function sanitizeHostnameLabels(value: string): string {
 	return value
 		.split(".")
 		.join("-")
@@ -173,12 +222,12 @@ function sanitizeHostnameLabels(value) {
 		.replace(/--+/g, "-");
 }
 
-function packageShortName(name) {
+function packageShortName(name: string): string {
 	return name.split("/").pop() ?? name;
 }
 
-function unique(values) {
-	return Array.from(new Set(values.filter(Boolean)));
+function unique<T>(values: Array<T | undefined | null | false | "">): T[] {
+	return Array.from(new Set(values.filter((value): value is T => Boolean(value))));
 }
 
 module.exports = {

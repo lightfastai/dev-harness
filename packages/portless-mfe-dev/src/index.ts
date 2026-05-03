@@ -2,6 +2,214 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import type { SpawnSyncReturns, StdioOptions } from "node:child_process";
+
+export type Env = Record<string, string | undefined>;
+
+export interface PortRange {
+	min?: number | string;
+	max?: number | string;
+}
+
+export interface NormalizedPortRange {
+	min: number;
+	max: number;
+}
+
+export type ApplicationOverride =
+	| string
+	| {
+			dir?: string;
+			path?: string;
+			portlessName?: string;
+		};
+
+export interface PortlessMfeConfig {
+	root?: string;
+	configPath?: string;
+	portless?: {
+		name?: string;
+		port?: number | string;
+		https?: boolean;
+		tld?: string;
+	};
+	microfrontends?: {
+		config?: string;
+		apps?: Record<string, ApplicationOverride>;
+		proxyPortRange?: PortRange;
+	};
+	relatedProjects?: Record<string, RelatedProjectConfig>;
+	[key: string]: unknown;
+}
+
+export interface RelatedProjectConfig {
+	projectName?: string;
+	fallbackHost?: string;
+	portlessName?: string;
+	path?: string;
+}
+
+export interface NormalizedPortlessMfeConfig {
+	root: string;
+	configPath?: string;
+	portless: {
+		name: string;
+		port: number;
+		https: boolean;
+		tld: string;
+	};
+	microfrontends: {
+		config: string;
+		apps: Record<string, ApplicationOverride>;
+		proxyPortRange: NormalizedPortRange;
+	};
+	relatedProjects: Record<string, RelatedProjectConfig>;
+}
+
+export interface MicrofrontendApplicationConfig {
+	packageName?: string;
+	development?: Record<string, unknown>;
+	[key: string]: unknown;
+}
+
+export interface MicrofrontendsSourceConfig {
+	applications?: Record<string, MicrofrontendApplicationConfig>;
+	options?: Record<string, unknown>;
+	[key: string]: unknown;
+}
+
+export interface RuntimeIdentity {
+	name: string;
+	baseName: string;
+	targetUrl: string;
+	worktreePrefix?: string;
+}
+
+export type PortAvailable = (port: number) => boolean | Promise<boolean>;
+export type GetPortlessUrl = (
+	name: string,
+	options?: { cwd?: string; env?: Env; runner?: typeof spawnSync },
+) => string | undefined;
+export type DetectWorktreePrefix = (cwd?: string) => string | undefined;
+
+export interface LoadPortlessMfeConfigOptions {
+	cwd?: string;
+	configPath?: string;
+}
+
+export interface ResolvePortlessUrlOptions {
+	name?: string;
+	path?: string;
+	targetUrl?: string;
+	cwd?: string;
+	env?: Env;
+	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
+	configPath?: string;
+	getPortlessUrl?: GetPortlessUrl;
+	detectWorktreePrefix?: DetectWorktreePrefix;
+	preferCurrentPortlessUrl?: boolean;
+}
+
+export type ResolveTargetUrlOptions = ResolvePortlessUrlOptions;
+
+export interface ResolveRuntimeIdentityOptions {
+	name?: string;
+	targetUrl: string;
+	appName?: string;
+	cwd?: string;
+	env?: Env;
+	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
+}
+
+export interface ResolvePortlessMfeRuntimeOptions extends ResolvePortlessUrlOptions {
+	appName?: string;
+}
+
+export interface ResolvePortlessApplicationUrlOptions extends ResolvePortlessUrlOptions {
+	app: string;
+	sourceConfig?: MicrofrontendsSourceConfig;
+}
+
+export interface GetPortlessMfeDevOriginsOptions {
+	name?: string;
+	tld?: string;
+	cwd?: string;
+	env?: Env;
+	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
+	configPath?: string;
+	includeWildcard?: boolean;
+	allowMissingConfig?: boolean;
+}
+
+export interface CreateVercelMicrofrontendsDevConfigOptions {
+	cwd?: string;
+	env?: Env;
+	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
+	sourceConfigPath?: string;
+	appDirs?: Record<string, ApplicationOverride>;
+	write?: boolean;
+	portAvailable?: PortAvailable;
+	getPortlessUrl?: GetPortlessUrl;
+	detectWorktreePrefix?: DetectWorktreePrefix;
+}
+
+export interface VercelMicrofrontendsDevConfigResult {
+	host: string;
+	localProxyPort: number;
+	appUrls: Record<string, string>;
+	appBridgePorts: Record<string, number>;
+	appDirs: Record<string, string>;
+	sourceConfig: MicrofrontendsSourceConfig;
+	generatedConfig: MicrofrontendsSourceConfig;
+	sourceConfigPath: string;
+	generatedConfigPath: string;
+	runtimeConfigFilename: string;
+	localAppNames: string[];
+}
+
+export interface InferLocalAppNamesOptions {
+	applications?: Record<string, MicrofrontendApplicationConfig>;
+	requestedApps?: string[];
+	commandArgs?: string[];
+	appDirs?: Record<string, string>;
+	cwd?: string;
+	root?: string;
+	env?: Env;
+}
+
+export interface CreateVercelMicrofrontendsDevEnvOptions {
+	result: Pick<
+		VercelMicrofrontendsDevConfigResult,
+		"localProxyPort" | "generatedConfigPath" | "runtimeConfigFilename"
+	> & { localAppNames?: string[] };
+	localApps?: string[];
+	env?: Env;
+}
+
+export interface ResolvePortlessHostOptions extends ResolvePortlessUrlOptions {}
+
+export interface WorkspacePackage {
+	name: string;
+	dir: string;
+}
+
+interface NormalizedApplicationOverride {
+	dir?: string;
+	portlessName?: string;
+}
+
+interface NormalizePackageConfigOptions {
+	root?: string;
+	configPath?: string;
+}
+
+interface CommandResult {
+	status: number | null;
+	stdout?: string;
+	stderr?: string;
+}
+
+type FallbackCommand = [string, string[]];
 
 const CONFIG_FILENAMES = ["portless-mfe.config.json"];
 const RUNTIME_CONFIG_FILENAME = "microfrontends.local.json";
@@ -98,11 +306,16 @@ const RESERVED_PORTS = new Set([
 	6697,
 ]);
 
-export async function loadPortlessMfeConfig(options = {}) {
+export async function loadPortlessMfeConfig(
+	options: LoadPortlessMfeConfigOptions = {},
+): Promise<NormalizedPortlessMfeConfig> {
 	return loadPortlessMfeConfigSync(options);
 }
 
-export function loadPortlessMfeConfigSync({ cwd = process.cwd(), configPath } = {}) {
+export function loadPortlessMfeConfigSync({
+	cwd = process.cwd(),
+	configPath,
+}: LoadPortlessMfeConfigOptions = {}): NormalizedPortlessMfeConfig {
 	const resolvedPath = configPath
 		? path.resolve(cwd, configPath)
 		: findConfigFile(cwd);
@@ -131,7 +344,7 @@ export function resolvePortlessUrl({
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
 	preferCurrentPortlessUrl = true,
-} = {}) {
+}: ResolvePortlessUrlOptions = {}): string {
 	const normalized = resolveOptionalPackageConfigForApi({ cwd, config, configPath }) ??
 		normalizePackageConfig(config ?? {}, { root: cwd });
 	const portlessName = name ?? normalized.portless.name;
@@ -165,7 +378,7 @@ export function resolvePortlessUrl({
 	return withTargetPath(`${protocol}://${host}${portSuffix}`, resolvedTargetPath);
 }
 
-export function resolveTargetUrl(options = {}) {
+export function resolveTargetUrl(options: ResolveTargetUrlOptions = {}): string {
 	return resolvePortlessUrl(options);
 }
 
@@ -176,7 +389,7 @@ export function resolveRuntimeIdentity({
 	cwd = process.cwd(),
 	env = process.env,
 	config,
-} = {}) {
+}: ResolveRuntimeIdentityOptions): RuntimeIdentity {
 	const normalized = normalizePackageConfig(config ?? {}, { root: cwd });
 	const portlessName = name ?? normalized.portless.name;
 	const runtimeBaseName = appName ?? `${portlessName}-desktop`;
@@ -212,7 +425,7 @@ export function resolvePortlessMfeUrl({
 	configPath,
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
-} = {}) {
+}: ResolvePortlessMfeRuntimeOptions = {}): string {
 	const normalized = resolvePackageConfigForApi({ cwd, config, configPath });
 	const portlessName = name ?? normalized.portless.name;
 	const runtimeEnv = buildPortlessEnv(normalized, env);
@@ -240,7 +453,7 @@ export function resolvePortlessMfeRuntime({
 	configPath,
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
-} = {}) {
+}: ResolvePortlessMfeRuntimeOptions = {}): RuntimeIdentity {
 	const normalized = resolvePackageConfigForApi({ cwd, config, configPath });
 	const portlessName = name ?? normalized.portless.name;
 	const runtimeEnv = buildPortlessEnv(normalized, env);
@@ -276,7 +489,7 @@ export function resolvePortlessApplicationUrl({
 	sourceConfig,
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
-} = {}) {
+}: ResolvePortlessApplicationUrlOptions): string {
 	if (!app) {
 		throw new Error("resolvePortlessApplicationUrl requires an app name.");
 	}
@@ -314,7 +527,7 @@ export function getPortlessMfeDevOrigins({
 	configPath,
 	includeWildcard = true,
 	allowMissingConfig = false,
-} = {}) {
+}: GetPortlessMfeDevOriginsOptions = {}): string[] {
 	const normalized = resolveOptionalPackageConfigForApi({ cwd, config, configPath });
 
 	if (!normalized && !name) {
@@ -364,7 +577,7 @@ export async function createVercelMicrofrontendsDevConfig({
 	portAvailable = isPortAvailable,
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
-} = {}) {
+}: CreateVercelMicrofrontendsDevConfigOptions = {}): Promise<VercelMicrofrontendsDevConfigResult> {
 	const normalized = normalizePackageConfig(config ?? {}, { root: cwd });
 	const mfeConfigOptions = normalized.microfrontends;
 	const sourcePath = path.resolve(
@@ -372,7 +585,7 @@ export async function createVercelMicrofrontendsDevConfig({
 		sourceConfigPath ?? mfeConfigOptions.config,
 	);
 	const generatedPath = path.join(path.dirname(sourcePath), RUNTIME_CONFIG_FILENAME);
-	const sourceConfig = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+	const sourceConfig = JSON.parse(fs.readFileSync(sourcePath, "utf8")) as MicrofrontendsSourceConfig;
 	const host = resolvePortlessHost({
 		name: normalized.portless.name,
 		cwd: normalized.root,
@@ -406,7 +619,7 @@ export async function createVercelMicrofrontendsDevConfig({
 			}),
 		]),
 	);
-	const appBridgePorts = {};
+	const appBridgePorts: Record<string, number> = {};
 	const usedPorts = new Set([localProxyPort]);
 	for (const appName of Object.keys(applications)) {
 		const port = await choosePort(`${host}:${appName}:bridge`, {
@@ -461,7 +674,10 @@ export async function createVercelMicrofrontendsDevConfig({
 	};
 }
 
-export function normalizePackageConfig(rawConfig, { root = process.cwd(), configPath } = {}) {
+export function normalizePackageConfig(
+	rawConfig: PortlessMfeConfig | NormalizedPortlessMfeConfig = {},
+	{ root = process.cwd(), configPath }: NormalizePackageConfigOptions = {},
+): NormalizedPortlessMfeConfig {
 	const portless = rawConfig?.portless ?? {};
 	const microfrontends = rawConfig?.microfrontends ?? {};
 	const relatedProjects = rawConfig?.relatedProjects ?? {};
@@ -487,7 +703,10 @@ export function normalizePackageConfig(rawConfig, { root = process.cwd(), config
 	};
 }
 
-export function selectLocalAppNames(applications, requestedApps = []) {
+export function selectLocalAppNames(
+	applications: Record<string, MicrofrontendApplicationConfig> = {},
+	requestedApps: string[] = [],
+): string[] {
 	const allAppNames = Object.keys(applications ?? {});
 	const requested = requestedApps.filter(Boolean);
 
@@ -495,8 +714,8 @@ export function selectLocalAppNames(applications, requestedApps = []) {
 		return allAppNames;
 	}
 
-	const selected = [];
-	const unknownApps = [];
+	const selected: string[] = [];
+	const unknownApps: string[] = [];
 
 	for (const requestedApp of requested) {
 		const appName = resolveRequestedApplicationName(applications, requestedApp);
@@ -527,7 +746,7 @@ export function inferLocalAppNames({
 	cwd = process.cwd(),
 	root = process.cwd(),
 	env = process.env,
-} = {}) {
+}: InferLocalAppNamesOptions = {}): string[] {
 	const envApps = parseList(env.PORTLESS_MFE_LOCAL_APPS);
 	const explicitApps = requestedApps.length ? requestedApps : envApps;
 
@@ -553,7 +772,7 @@ export function createVercelMicrofrontendsDevEnv({
 	result,
 	localApps = result?.localAppNames ?? [],
 	env = process.env,
-} = {}) {
+}: CreateVercelMicrofrontendsDevEnvOptions): Env {
 	if (!result) {
 		throw new Error("createVercelMicrofrontendsDevEnv requires a generated dev config result.");
 	}
@@ -568,7 +787,7 @@ export function createVercelMicrofrontendsDevEnv({
 	};
 }
 
-export function addTurboDevEnvMode(commandArgs) {
+export function addTurboDevEnvMode(commandArgs: string[]): string[] {
 	if (!hasTurboRunCommand(commandArgs) || hasTurboEnvMode(commandArgs) || !hasTurboDevTask(commandArgs)) {
 		return commandArgs;
 	}
@@ -581,8 +800,8 @@ export function addTurboDevEnvMode(commandArgs) {
 	];
 }
 
-export function extractCommandFilters(commandArgs = []) {
-	const filters = [];
+export function extractCommandFilters(commandArgs: string[] = []): string[] {
+	const filters: string[] = [];
 
 	for (let i = 0; i < commandArgs.length; i++) {
 		const arg = commandArgs[i];
@@ -622,7 +841,7 @@ export function resolvePortlessHost({
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
 	preferCurrentPortlessUrl = true,
-} = {}) {
+}: ResolvePortlessHostOptions = {}): string {
 	const normalized = normalizePackageConfig(config ?? {}, { root: cwd });
 	const portlessName = name ?? normalized.portless.name;
 	const tld = env.PORTLESS_TLD || normalized.portless.tld;
@@ -647,10 +866,18 @@ export function resolvePortlessHost({
 	return `${effectiveName}.${tld}`;
 }
 
-export function resolveApplicationDirectories({ root, applications, overrides = {} }) {
+export function resolveApplicationDirectories({
+	root,
+	applications,
+	overrides = {},
+}: {
+	root: string;
+	applications: Record<string, MicrofrontendApplicationConfig>;
+	overrides?: Record<string, ApplicationOverride>;
+}): Record<string, string> {
 	const workspacePackages = discoverWorkspacePackages(root);
-	const byName = new Map();
-	const byShortName = new Map();
+	const byName = new Map<string, string>();
+	const byShortName = new Map<string, string>();
 
 	for (const pkg of workspacePackages) {
 		byName.set(pkg.name, pkg.dir);
@@ -671,9 +898,9 @@ export function resolveApplicationDirectories({ root, applications, overrides = 
 	);
 }
 
-export function discoverWorkspacePackages(root) {
+export function discoverWorkspacePackages(root: string): WorkspacePackage[] {
 	const patterns = discoverWorkspacePatterns(root);
-	const packages = [];
+	const packages: WorkspacePackage[] = [];
 
 	for (const pattern of patterns) {
 		for (const dir of expandWorkspacePattern(root, pattern)) {
@@ -692,7 +919,14 @@ export function discoverWorkspacePackages(root) {
 	return packages;
 }
 
-export async function resolveLocalProxyPort(host, { env = process.env, range, portAvailable = isPortAvailable } = {}) {
+export async function resolveLocalProxyPort(
+	host: string,
+	{
+		env = process.env,
+		range,
+		portAvailable = isPortAvailable,
+	}: { env?: Env; range?: NormalizedPortRange; portAvailable?: PortAvailable } = {},
+): Promise<number> {
 	const explicitPort = parsePort(env.PORT) ?? parsePort(env.MFE_LOCAL_PROXY_PORT);
 	if (explicitPort) {
 		return explicitPort;
@@ -707,7 +941,20 @@ export async function resolveLocalProxyPort(host, { env = process.env, range, po
 	});
 }
 
-export async function choosePort(seed, { min, max, usedPorts = new Set(), portAvailable = isPortAvailable }) {
+export async function choosePort(
+	seed: string,
+	{
+		min,
+		max,
+		usedPorts = new Set<number>(),
+		portAvailable = isPortAvailable,
+	}: {
+		min: number;
+		max: number;
+		usedPorts?: Set<number>;
+		portAvailable?: PortAvailable;
+	},
+): Promise<number> {
 	if (min > max) {
 		throw new Error(`Invalid port range ${min}-${max}`);
 	}
@@ -729,7 +976,7 @@ export async function choosePort(seed, { min, max, usedPorts = new Set(), portAv
 	throw new Error(`No available port found in range ${min}-${max} for ${seed}`);
 }
 
-export function defaultDetectWorktreePrefix(cwd = process.cwd()) {
+export function defaultDetectWorktreePrefix(cwd = process.cwd()): string | undefined {
 	const cliPrefix = detectWorktreeViaGitCli(cwd);
 	if (cliPrefix !== undefined) {
 		return cliPrefix;
@@ -738,7 +985,7 @@ export function defaultDetectWorktreePrefix(cwd = process.cwd()) {
 	return detectWorktreeViaFilesystem(cwd);
 }
 
-export function branchToPrefix(branch) {
+export function branchToPrefix(branch?: string): string | undefined {
 	if (!branch || branch === "HEAD" || branch === "main" || branch === "master") {
 		return undefined;
 	}
@@ -748,7 +995,7 @@ export function branchToPrefix(branch) {
 	return prefix || undefined;
 }
 
-export function withTargetPath(baseUrl, targetPath = "/") {
+export function withTargetPath(baseUrl: string, targetPath: string = "/"): string {
 	if (targetPath === "" || targetPath === undefined || targetPath === null) {
 		return new URL(baseUrl).toString();
 	}
@@ -759,7 +1006,10 @@ export function withTargetPath(baseUrl, targetPath = "/") {
 	return new URL(normalizedPath, baseUrl).toString();
 }
 
-export function buildPortlessEnv(config, env = process.env) {
+export function buildPortlessEnv(
+	config: PortlessMfeConfig | NormalizedPortlessMfeConfig,
+	env: Env = process.env,
+): Env {
 	const normalized = normalizePackageConfig(config ?? {}, { root: process.cwd() });
 	return {
 		...env,
@@ -769,7 +1019,17 @@ export function buildPortlessEnv(config, env = process.env) {
 	};
 }
 
-export function startPortlessProxy({ config, cwd = process.cwd(), env = process.env, runner = spawnSync } = {}) {
+export function startPortlessProxy({
+	config,
+	cwd = process.cwd(),
+	env = process.env,
+	runner = spawnSync,
+}: {
+	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
+	cwd?: string;
+	env?: Env;
+	runner?: typeof spawnSync;
+} = {}): { env: Env; port: number; https: boolean } {
 	const normalized = normalizePackageConfig(config ?? {}, { root: cwd });
 	const portlessEnv = buildPortlessEnv(normalized, env);
 	const port = parsePort(portlessEnv.PORTLESS_PORT) ?? normalized.portless.port;
@@ -793,7 +1053,14 @@ export function startPortlessProxy({ config, cwd = process.cwd(), env = process.
 	return { env: portlessEnv, port, https };
 }
 
-export function defaultGetPortlessUrl(name, { cwd = process.cwd(), env = process.env, runner = spawnSync } = {}) {
+export function defaultGetPortlessUrl(
+	name: string,
+	{ cwd = process.cwd(), env = process.env, runner = spawnSync }: {
+		cwd?: string;
+		env?: Env;
+		runner?: typeof spawnSync;
+	} = {},
+): string | undefined {
 	const result = runWithFallbackCommands({
 		commands: [
 			["portless", ["get", name]],
@@ -812,8 +1079,20 @@ export function defaultGetPortlessUrl(name, { cwd = process.cwd(), env = process
 	return undefined;
 }
 
-function runWithFallbackCommands({ commands, cwd, env, runner, stdio }) {
-	let lastResult = { status: 1, stdout: "", stderr: "" };
+function runWithFallbackCommands({
+	commands,
+	cwd,
+	env,
+	runner,
+	stdio,
+}: {
+	commands: FallbackCommand[];
+	cwd: string;
+	env: Env;
+	runner: typeof spawnSync;
+	stdio: StdioOptions;
+}): CommandResult {
+	let lastResult: CommandResult = { status: 1, stdout: "", stderr: "" };
 
 	for (const [command, args] of commands) {
 		const result = runner(command, args, {
@@ -832,7 +1111,11 @@ function runWithFallbackCommands({ commands, cwd, env, runner, stdio }) {
 	return lastResult;
 }
 
-export function resolveApplicationPortlessName(appName, appConfig = {}, config = {}) {
+export function resolveApplicationPortlessName(
+	appName: string,
+	appConfig: MicrofrontendApplicationConfig = {},
+	config: PortlessMfeConfig | NormalizedPortlessMfeConfig = {},
+): string {
 	const normalized = normalizePackageConfig(config, { root: config.root ?? process.cwd() });
 	const override = normalizeApplicationOverride(normalized.microfrontends.apps?.[appName]);
 	if (override.portlessName) {
@@ -844,13 +1127,17 @@ export function resolveApplicationPortlessName(appName, appConfig = {}, config =
 	return normalizePortlessName(`${shortName}.${normalized.portless.name}`);
 }
 
-function readMicrofrontendsConfig(config) {
+function readMicrofrontendsConfig(
+	config: PortlessMfeConfig | NormalizedPortlessMfeConfig,
+): MicrofrontendsSourceConfig {
 	const normalized = normalizePackageConfig(config, { root: config.root ?? process.cwd() });
 	const sourcePath = path.resolve(normalized.root, normalized.microfrontends.config);
 	return JSON.parse(fs.readFileSync(sourcePath, "utf8"));
 }
 
-function readMicrofrontendsConfigIfAvailable(config) {
+function readMicrofrontendsConfigIfAvailable(
+	config: PortlessMfeConfig | NormalizedPortlessMfeConfig,
+): MicrofrontendsSourceConfig | undefined {
 	try {
 		return readMicrofrontendsConfig(config);
 	} catch {
@@ -858,7 +1145,7 @@ function readMicrofrontendsConfigIfAvailable(config) {
 	}
 }
 
-function normalizeApplicationOverride(value) {
+function normalizeApplicationOverride(value: ApplicationOverride | unknown): NormalizedApplicationOverride {
 	if (!value) {
 		return {};
 	}
@@ -866,15 +1153,16 @@ function normalizeApplicationOverride(value) {
 		return { dir: value };
 	}
 	if (typeof value === "object" && !Array.isArray(value)) {
+		const override = value as { dir?: string; path?: string; portlessName?: string };
 		return {
-			dir: value.dir ?? value.path,
-			portlessName: value.portlessName,
+			dir: override.dir ?? override.path,
+			portlessName: override.portlessName,
 		};
 	}
 	return {};
 }
 
-function normalizePortlessName(value) {
+function normalizePortlessName(value: string): string {
 	return String(value)
 		.split(".")
 		.map((label) => sanitizeHostnameLabels(label))
@@ -882,7 +1170,7 @@ function normalizePortlessName(value) {
 		.join(".");
 }
 
-function portlessUrlMatchesName(url, name, tld) {
+function portlessUrlMatchesName(url: string, name: string, tld: string): boolean {
 	try {
 		const host = new URL(url).hostname;
 		const baseHost = `${name}.${tld}`;
@@ -892,11 +1180,19 @@ function portlessUrlMatchesName(url, name, tld) {
 	}
 }
 
-function unique(values) {
-	return Array.from(new Set(values.filter(Boolean)));
+function unique<T>(values: Array<T | undefined | null | false | "">): T[] {
+	return Array.from(new Set(values.filter((value): value is T => Boolean(value))));
 }
 
-function resolvePackageConfigForApi({ cwd, config, configPath }) {
+function resolvePackageConfigForApi({
+	cwd,
+	config,
+	configPath,
+}: {
+	cwd: string;
+	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
+	configPath?: string;
+}): NormalizedPortlessMfeConfig {
 	const normalized = resolveOptionalPackageConfigForApi({ cwd, config, configPath });
 	if (normalized) {
 		return normalized;
@@ -907,7 +1203,15 @@ function resolvePackageConfigForApi({ cwd, config, configPath }) {
 	);
 }
 
-function resolveOptionalPackageConfigForApi({ cwd, config, configPath }) {
+function resolveOptionalPackageConfigForApi({
+	cwd,
+	config,
+	configPath,
+}: {
+	cwd: string;
+	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
+	configPath?: string;
+}): NormalizedPortlessMfeConfig | undefined {
 	if (config) {
 		return normalizePackageConfig(config, {
 			root: config.root ?? cwd,
@@ -929,7 +1233,7 @@ function resolveOptionalPackageConfigForApi({ cwd, config, configPath }) {
 	});
 }
 
-function findConfigFile(cwd) {
+function findConfigFile(cwd: string): string | undefined {
 	let dir = path.resolve(cwd);
 
 	for (;;) {
@@ -948,7 +1252,7 @@ function findConfigFile(cwd) {
 	}
 }
 
-function discoverWorkspacePatterns(root) {
+function discoverWorkspacePatterns(root: string): string[] {
 	const pnpmWorkspacePath = path.join(root, "pnpm-workspace.yaml");
 	if (fs.existsSync(pnpmWorkspacePath)) {
 		const patterns = parsePnpmWorkspacePackages(
@@ -975,8 +1279,8 @@ function discoverWorkspacePatterns(root) {
 	return [];
 }
 
-function parsePnpmWorkspacePackages(contents) {
-	const patterns = [];
+function parsePnpmWorkspacePackages(contents: string): string[] {
+	const patterns: string[] = [];
 	let inPackages = false;
 
 	for (const line of contents.split(/\r?\n/)) {
@@ -998,7 +1302,7 @@ function parsePnpmWorkspacePackages(contents) {
 	return patterns;
 }
 
-function expandWorkspacePattern(root, pattern) {
+function expandWorkspacePattern(root: string, pattern: string): string[] {
 	if (pattern.startsWith("!")) {
 		return [];
 	}
@@ -1020,7 +1324,7 @@ function expandWorkspacePattern(root, pattern) {
 		.map((entry) => path.join(base, entry.name));
 }
 
-function detectWorktreeViaGitCli(cwd) {
+function detectWorktreeViaGitCli(cwd: string): string | undefined {
 	const list = spawnSync("git", ["worktree", "list", "--porcelain"], {
 		cwd,
 		encoding: "utf8",
@@ -1066,7 +1370,7 @@ function detectWorktreeViaGitCli(cwd) {
 	return branchToPrefix(branch.stdout.trim());
 }
 
-function detectWorktreeViaFilesystem(startDir) {
+function detectWorktreeViaFilesystem(startDir: string): string | undefined {
 	let dir = startDir;
 
 	for (;;) {
@@ -1100,7 +1404,7 @@ function detectWorktreeViaFilesystem(startDir) {
 	}
 }
 
-function readBranchFromHead(gitDir) {
+function readBranchFromHead(gitDir: string): string | undefined {
 	try {
 		const head = fs.readFileSync(path.join(gitDir, "HEAD"), "utf8").trim();
 		const match = head.match(/^ref: refs\/heads\/(.+)$/);
@@ -1110,7 +1414,14 @@ function readBranchFromHead(gitDir) {
 	}
 }
 
-function resolveRequestedApplicationName(applications = {}, requestedApp) {
+function resolveRequestedApplicationName(
+	applications: Record<string, MicrofrontendApplicationConfig> = {},
+	requestedApp?: string,
+): string | undefined {
+	if (!requestedApp) {
+		return undefined;
+	}
+
 	if (Object.hasOwn(applications, requestedApp)) {
 		return requestedApp;
 	}
@@ -1129,7 +1440,10 @@ function resolveRequestedApplicationName(applications = {}, requestedApp) {
 	return undefined;
 }
 
-function resolveFilterToApplicationName(filter, { appDirs = {}, root = process.cwd() } = {}) {
+function resolveFilterToApplicationName(
+	filter: string,
+	{ appDirs = {}, root = process.cwd() }: { appDirs?: Record<string, string>; root?: string } = {},
+): string | undefined {
 	if (!filter.includes("/") && !filter.startsWith(".")) {
 		return undefined;
 	}
@@ -1144,7 +1458,10 @@ function resolveFilterToApplicationName(filter, { appDirs = {}, root = process.c
 	return undefined;
 }
 
-function resolveCwdApplicationName({ appDirs = {}, cwd = process.cwd() } = {}) {
+function resolveCwdApplicationName({
+	appDirs = {},
+	cwd = process.cwd(),
+}: { appDirs?: Record<string, string>; cwd?: string } = {}): string | undefined {
 	const resolvedCwd = path.resolve(cwd);
 	const matches = Object.entries(appDirs)
 		.filter(([, appDir]) => isPathInside(resolvedCwd, path.resolve(appDir)))
@@ -1152,19 +1469,19 @@ function resolveCwdApplicationName({ appDirs = {}, cwd = process.cwd() } = {}) {
 	return matches[0]?.[0];
 }
 
-function isPathInside(child, parent) {
+function isPathInside(child: string, parent: string): boolean {
 	const relative = path.relative(parent, child);
 	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function parseList(value) {
+function parseList(value: string | undefined): string[] {
 	return String(value ?? "")
 		.split(",")
 		.map((item) => item.trim())
 		.filter(Boolean);
 }
 
-function normalizeFilterSelector(value) {
+function normalizeFilterSelector(value: string | undefined): string | undefined {
 	if (!value) {
 		return undefined;
 	}
@@ -1185,7 +1502,7 @@ function normalizeFilterSelector(value) {
 	return selector || undefined;
 }
 
-function hasTurboRunCommand(commandArgs = []) {
+function hasTurboRunCommand(commandArgs: string[] = []): boolean {
 	if (!commandArgs.length) {
 		return false;
 	}
@@ -1201,11 +1518,11 @@ function hasTurboRunCommand(commandArgs = []) {
 		commandArgs.includes("run");
 }
 
-function hasTurboEnvMode(commandArgs = []) {
+function hasTurboEnvMode(commandArgs: string[] = []): boolean {
 	return commandArgs.some((arg) => arg === "--env-mode" || arg.startsWith("--env-mode="));
 }
 
-function hasTurboDevTask(commandArgs = []) {
+function hasTurboDevTask(commandArgs: string[] = []): boolean {
 	const runIndex = commandArgs.indexOf("run");
 	if (runIndex === -1) {
 		return false;
@@ -1237,18 +1554,18 @@ function hasTurboDevTask(commandArgs = []) {
 	return false;
 }
 
-function isHttpsEnabled(config, env) {
+function isHttpsEnabled(config: NormalizedPortlessMfeConfig, env: Env): boolean {
 	if (env.PORTLESS_HTTPS !== undefined) {
 		return env.PORTLESS_HTTPS !== "0" && env.PORTLESS_HTTPS !== "false";
 	}
 	return Boolean(config.portless.https);
 }
 
-function shouldIncludePort(protocol, port) {
+function shouldIncludePort(protocol: string, port: number | undefined): boolean {
 	return Boolean(port) && !((protocol === "https" && port === 443) || (protocol === "http" && port === 80));
 }
 
-function sanitizeHostnameLabels(value) {
+function sanitizeHostnameLabels(value: string): string {
 	return value
 		.split(".")
 		.join("-")
@@ -1258,11 +1575,11 @@ function sanitizeHostnameLabels(value) {
 		.replace(/--+/g, "-");
 }
 
-function packageShortName(name) {
+function packageShortName(name: string): string {
 	return name.split("/").pop() ?? name;
 }
 
-function positiveHash(value) {
+function positiveHash(value: string): number {
 	let hash = 0;
 	for (let i = 0; i < value.length; i++) {
 		hash = (hash << 5) - hash + value.charCodeAt(i);
@@ -1271,7 +1588,7 @@ function positiveHash(value) {
 	return Math.abs(hash);
 }
 
-function parsePort(value) {
+function parsePort(value: string | number | undefined | null): number | undefined {
 	if (value === undefined || value === null || value === "") {
 		return undefined;
 	}
@@ -1280,8 +1597,8 @@ function parsePort(value) {
 	return Number.isInteger(port) && port > 0 && port < 65536 ? port : undefined;
 }
 
-function isPortAvailable(port) {
-	return new Promise((resolve) => {
+function isPortAvailable(port: number): Promise<boolean> {
+	return new Promise<boolean>((resolve) => {
 		const server = net.createServer();
 
 		server.once("error", () => resolve(false));

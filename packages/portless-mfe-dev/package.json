@@ -8,22 +8,23 @@
   },
   "exports": {
     ".": {
-      "types": "./src/public.d.ts",
-      "import": "./src/public.js"
+      "types": "./dist/public.d.ts",
+      "import": "./dist/public.js"
     },
     "./next": {
-      "types": "./src/next.d.ts",
-      "import": "./src/next.js",
-      "require": "./src/next.cjs"
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js",
+      "require": "./dist/next.cjs"
     },
     "./related-projects": {
-      "types": "./src/related-projects.d.ts",
-      "import": "./src/related-projects.js"
+      "types": "./dist/related-projects.d.ts",
+      "import": "./dist/related-projects.js"
     }
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "typecheck": "node --check src/index.js && node --check src/public.js && node --check src/next.js && node --check src/next.cjs && node --check src/related-projects.js && node --check bin/portless-mfe.mjs"
+    "build": "tsc -p tsconfig.build.json",
+    "test": "rm -rf .turbo/test-dist && tsc -p tsconfig.test.json && node --test .turbo/test-dist/test/*.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -31,5 +32,9 @@
   "dependencies": {
     "@vercel/related-projects": "1.1.0",
     "portless": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
   }
 }
