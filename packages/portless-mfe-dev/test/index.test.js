@@ -9,12 +9,15 @@ import {
 	choosePort,
 	createVercelMicrofrontendsDevEnv,
 	createVercelMicrofrontendsDevConfig,
+	getPortlessMfeDevOrigins,
 	inferLocalAppNames,
 	loadPortlessMfeConfig,
+	resolvePortlessMfeRuntime,
 	resolveRuntimeIdentity,
 	resolveTargetUrl,
 	selectLocalAppNames,
 } from "../src/index.js";
+import { withPortlessMfeDev } from "../src/next.js";
 
 test("loadPortlessMfeConfig reads JSON config and applies fixed defaults", async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "portless-mfe-config-"));
@@ -85,6 +88,69 @@ test("resolveTargetUrl does not read a target path from package config", () => {
 	});
 
 	assert.equal(targetUrl, "http://mfe.localhost:1355/");
+});
+
+test("resolvePortlessMfeRuntime loads config for direct API consumers", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "portless-mfe-runtime-"));
+	writeJson(path.join(root, "portless-mfe.config.json"), {
+		portless: {
+			name: "lightfast",
+			port: 1355,
+			https: false,
+		},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+		},
+	});
+
+	const identity = resolvePortlessMfeRuntime({
+		cwd: root,
+		path: "/sign-in",
+		env: {
+			PORTLESS_HTTPS: "0",
+			PORTLESS_PORT: "1355",
+		},
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => "fix-ui",
+	});
+
+	assert.equal(
+		identity.targetUrl,
+		"http://fix-ui.lightfast.localhost:1355/sign-in",
+	);
+	assert.equal(identity.name, "lightfast-desktop-fix-ui");
+});
+
+test("withPortlessMfeDev adds config-derived local origins to Next config", () => {
+	const config = {
+		portless: {
+			name: "lightfast",
+			tld: "localhost",
+		},
+	};
+
+	assert.deepEqual(getPortlessMfeDevOrigins({ config }), [
+		"lightfast.localhost",
+		"*.lightfast.localhost",
+	]);
+
+	const wrapped = withPortlessMfeDev(
+		{ allowedDevOrigins: ["custom.localhost"] },
+		{ config },
+	);
+	assert.deepEqual(wrapped.allowedDevOrigins, [
+		"custom.localhost",
+		"lightfast.localhost",
+		"*.lightfast.localhost",
+	]);
+
+	assert.deepEqual(
+		withPortlessMfeDev(
+			{ reactStrictMode: true },
+			{ cwd: path.join(os.tmpdir(), "missing-portless-mfe") },
+		),
+		{ reactStrictMode: true },
+	);
 });
 
 test("choosePort scans upward from deterministic candidate when a port is busy", async () => {

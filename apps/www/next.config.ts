@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
+import { withMicrofrontends } from "@vercel/microfrontends/next/config";
+import { withPortlessMfeDev } from "@repo/portless-mfe-dev/next";
 
-const nextConfig: NextConfig = {
-	allowedDevOrigins: ["mfe.localhost", "*.mfe.localhost"],
-};
+const nextConfig: NextConfig = {};
 
-export default nextConfig;
+export default withPortlessMfeDev(withMicrofrontends(nextConfig));

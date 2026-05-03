@@ -4,13 +4,12 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import {
 	addTurboDevEnvMode,
-	buildPortlessEnv,
 	createVercelMicrofrontendsDevEnv,
 	createVercelMicrofrontendsDevConfig,
 	inferLocalAppNames,
 	loadPortlessMfeConfig,
-	resolveRuntimeIdentity,
-	resolveTargetUrl,
+	resolvePortlessMfeRuntime,
+	resolvePortlessMfeUrl,
 	startPortlessProxy,
 } from "../src/index.js";
 
@@ -414,17 +413,13 @@ async function handleRun(args) {
 
 async function handleUrl(args) {
 	const { options } = parseOptions(args);
-	const config = await loadPortlessMfeConfig({
-		cwd: process.cwd(),
-		configPath: options.config,
-	});
-	const targetUrl = resolveTargetUrl({
+	const targetUrl = resolvePortlessMfeUrl({
 		name: options.name,
 		path: options.path,
 		targetUrl: options.targetUrl,
-		cwd: config.root,
-		env: buildPortlessEnv(config, process.env),
-		config,
+		cwd: process.cwd(),
+		env: process.env,
+		configPath: options.config,
 	});
 
 	if (options.json) {
@@ -437,25 +432,14 @@ async function handleUrl(args) {
 
 async function handleIdentity(args) {
 	const { options } = parseOptions(args);
-	const config = await loadPortlessMfeConfig({
-		cwd: process.cwd(),
-		configPath: options.config,
-	});
-	const targetUrl = resolveTargetUrl({
+	const identity = resolvePortlessMfeRuntime({
 		name: options.name,
 		path: options.path,
 		targetUrl: options.targetUrl,
-		cwd: config.root,
-		env: buildPortlessEnv(config, process.env),
-		config,
-	});
-	const identity = resolveRuntimeIdentity({
-		name: options.name,
-		targetUrl,
 		appName: options.appName,
-		cwd: config.root,
 		env: process.env,
-		config,
+		cwd: process.cwd(),
+		configPath: options.config,
 	});
 
 	if (options.json) {

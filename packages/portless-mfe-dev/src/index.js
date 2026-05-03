@@ -98,7 +98,11 @@ const RESERVED_PORTS = new Set([
 	6697,
 ]);
 
-export async function loadPortlessMfeConfig({ cwd = process.cwd(), configPath } = {}) {
+export async function loadPortlessMfeConfig(options = {}) {
+	return loadPortlessMfeConfigSync(options);
+}
+
+export function loadPortlessMfeConfigSync({ cwd = process.cwd(), configPath } = {}) {
 	const resolvedPath = configPath
 		? path.resolve(cwd, configPath)
 		: findConfigFile(cwd);
@@ -184,6 +188,99 @@ export function resolveRuntimeIdentity({
 		targetUrl,
 		worktreePrefix,
 	};
+}
+
+export function resolvePortlessMfeUrl({
+	name,
+	path: targetPath,
+	targetUrl,
+	cwd = process.cwd(),
+	env = process.env,
+	config,
+	configPath,
+	getPortlessUrl = defaultGetPortlessUrl,
+	detectWorktreePrefix = defaultDetectWorktreePrefix,
+} = {}) {
+	const normalized = resolvePackageConfigForApi({ cwd, config, configPath });
+	const portlessName = name ?? normalized.portless.name;
+	const runtimeEnv = buildPortlessEnv(normalized, env);
+
+	return resolveTargetUrl({
+		name: portlessName,
+		path: targetPath,
+		targetUrl,
+		cwd: normalized.root,
+		env: runtimeEnv,
+		config: normalized,
+		getPortlessUrl,
+		detectWorktreePrefix,
+	});
+}
+
+export function resolvePortlessMfeRuntime({
+	name,
+	path: targetPath,
+	targetUrl,
+	appName,
+	cwd = process.cwd(),
+	env = process.env,
+	config,
+	configPath,
+	getPortlessUrl = defaultGetPortlessUrl,
+	detectWorktreePrefix = defaultDetectWorktreePrefix,
+} = {}) {
+	const normalized = resolvePackageConfigForApi({ cwd, config, configPath });
+	const portlessName = name ?? normalized.portless.name;
+	const runtimeEnv = buildPortlessEnv(normalized, env);
+	const resolvedTargetUrl = resolveTargetUrl({
+		name: portlessName,
+		path: targetPath,
+		targetUrl,
+		cwd: normalized.root,
+		env: runtimeEnv,
+		config: normalized,
+		getPortlessUrl,
+		detectWorktreePrefix,
+	});
+
+	return resolveRuntimeIdentity({
+		name: portlessName,
+		targetUrl: resolvedTargetUrl,
+		appName,
+		cwd: normalized.root,
+		env: runtimeEnv,
+		config: normalized,
+	});
+}
+
+export function getPortlessMfeDevOrigins({
+	name,
+	tld,
+	cwd = process.cwd(),
+	env = process.env,
+	config,
+	configPath,
+	includeWildcard = true,
+	allowMissingConfig = false,
+} = {}) {
+	const normalized = resolveOptionalPackageConfigForApi({ cwd, config, configPath });
+
+	if (!normalized && !name) {
+		if (allowMissingConfig) {
+			return [];
+		}
+
+		throw new Error(
+			`Could not find ${CONFIG_FILENAMES.join(" or ")} from ${cwd}`,
+		);
+	}
+
+	const fallbackConfig = normalized ?? normalizePackageConfig({}, { root: cwd });
+	const portlessName = name ?? fallbackConfig.portless.name;
+	const portlessTld = tld ?? env.PORTLESS_TLD ?? fallbackConfig.portless.tld;
+	const baseHost = `${portlessName}.${portlessTld}`;
+
+	return includeWildcard ? [baseHost, `*.${baseHost}`] : [baseHost];
 }
 
 export async function createVercelMicrofrontendsDevConfig({
@@ -640,6 +737,39 @@ function runWithFallbackCommands({ commands, cwd, env, runner, stdio }) {
 	}
 
 	return lastResult;
+}
+
+function resolvePackageConfigForApi({ cwd, config, configPath }) {
+	const normalized = resolveOptionalPackageConfigForApi({ cwd, config, configPath });
+	if (normalized) {
+		return normalized;
+	}
+
+	throw new Error(
+		`Could not find ${CONFIG_FILENAMES.join(" or ")} from ${cwd}`,
+	);
+}
+
+function resolveOptionalPackageConfigForApi({ cwd, config, configPath }) {
+	if (config) {
+		return normalizePackageConfig(config, {
+			root: config.root ?? cwd,
+			configPath: config.configPath ?? configPath,
+		});
+	}
+
+	const resolvedPath = configPath
+		? path.resolve(cwd, configPath)
+		: findConfigFile(cwd);
+	if (!resolvedPath) {
+		return undefined;
+	}
+
+	const rawConfig = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
+	return normalizePackageConfig(rawConfig, {
+		configPath: resolvedPath,
+		root: path.dirname(resolvedPath),
+	});
 }
 
 function findConfigFile(cwd) {

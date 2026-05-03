@@ -1,62 +1,24 @@
 const { app, BrowserWindow, net } = require("electron");
-const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "../..");
-const PORTLESS_NAME = process.env.DESKTOP_PORTLESS_NAME || "mfe";
+const PORTLESS_NAME = process.env.DESKTOP_PORTLESS_NAME;
 const TARGET_PATH = process.env.DESKTOP_TARGET_PATH || "/sign-in";
 const QUIT_AFTER_LOAD = process.env.DESKTOP_QUIT_AFTER_LOAD === "1";
-const DESKTOP_BASE_NAME = "mfe-desktop";
-
-const IDENTITY = resolveIdentity();
-const TARGET = IDENTITY.targetUrl;
-const NAME = process.env.DESKTOP_NAME || IDENTITY.name;
-
-app.setName(NAME);
-app.setPath("userData", path.join(app.getPath("appData"), NAME));
 
 function emit(event, payload) {
 	process.stdout.write(`DESKTOP_EVENT ${event} ${JSON.stringify(payload)}\n`);
 }
 
-function resolveIdentity() {
-	const args = [
-		"identity",
-		"--json",
-		"--name",
-		PORTLESS_NAME,
-		"--path",
-		TARGET_PATH,
-		"--app-name",
-		DESKTOP_BASE_NAME,
-	];
+async function resolveIdentity() {
+	const { resolvePortlessMfeRuntime } = await import("@repo/portless-mfe-dev");
 
-	if (process.env.DESKTOP_TARGET_URL) {
-		args.push("--target-url", process.env.DESKTOP_TARGET_URL);
-	}
-
-	const commands = [
-		["portless-mfe", args],
-		["pnpm", ["exec", "portless-mfe", ...args]],
-	];
-
-	for (const [command, args] of commands) {
-		try {
-			const output = execFileSync(command, args, {
-				cwd: ROOT,
-				encoding: "utf8",
-				stdio: ["ignore", "pipe", "ignore"],
-			}).trim();
-
-			if (output) {
-				return JSON.parse(output);
-			}
-		} catch {
-			// Try the next command. URL and identity resolution lives in portless-mfe.
-		}
-	}
-
-	throw new Error("Unable to resolve desktop target via portless-mfe identity.");
+	return resolvePortlessMfeRuntime({
+		cwd: ROOT,
+		name: PORTLESS_NAME,
+		path: TARGET_PATH,
+		targetUrl: process.env.DESKTOP_TARGET_URL,
+	});
 }
 
 function fetchViaNet(url) {
@@ -75,13 +37,22 @@ function fetchViaNet(url) {
 	});
 }
 
-app.whenReady().then(async () => {
-	emit("ready", { name: NAME, target: TARGET, userData: app.getPath("userData") });
+async function main() {
+	const identity = await resolveIdentity();
+	const target = identity.targetUrl;
+	const name = process.env.DESKTOP_NAME || identity.name;
+
+	app.setName(name);
+	app.setPath("userData", path.join(app.getPath("appData"), name));
+
+	await app.whenReady();
+
+	emit("ready", { name, target, userData: app.getPath("userData") });
 
 	const win = new BrowserWindow({
 		width: 900,
 		height: 600,
-		title: `${NAME} -> ${TARGET}`,
+		title: `${name} -> ${target}`,
 		webPreferences: { contextIsolation: true },
 	});
 
@@ -90,7 +61,7 @@ app.whenReady().then(async () => {
 	});
 
 	try {
-		await win.loadURL(TARGET);
+		await win.loadURL(target);
 		const mainText = await win.webContents.executeJavaScript(
 			'document.querySelector("main")?.textContent || ""',
 		);
@@ -103,7 +74,7 @@ app.whenReady().then(async () => {
 		`);
 		emit("api-call:renderer", rendererApi);
 
-		const origin = new URL(TARGET).origin;
+		const origin = new URL(target).origin;
 		const mainApi = await fetchViaNet(`${origin}/api/ping`);
 		emit("api-call:main-net", mainApi);
 	} catch (err) {
@@ -113,6 +84,11 @@ app.whenReady().then(async () => {
 	if (QUIT_AFTER_LOAD) {
 		setTimeout(() => app.quit(), 500);
 	}
+}
+
+main().catch((err) => {
+	emit("error", { message: String(err) });
+	app.quit();
 });
 
 app.on("window-all-closed", () => app.quit());

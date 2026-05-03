@@ -7,11 +7,19 @@
     "portless-mfe": "./bin/portless-mfe.mjs"
   },
   "exports": {
-    ".": "./src/public.js"
+    ".": {
+      "types": "./src/public.d.ts",
+      "import": "./src/public.js"
+    },
+    "./next": {
+      "types": "./src/next.d.ts",
+      "import": "./src/next.js",
+      "require": "./src/next.cjs"
+    }
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "typecheck": "node --check src/index.js && node --check src/public.js && node --check bin/portless-mfe.mjs"
+    "typecheck": "node --check src/index.js && node --check src/public.js && node --check src/next.js && node --check src/next.cjs && node --check bin/portless-mfe.mjs"
   },
   "engines": {
     "node": ">=22.0.0"
