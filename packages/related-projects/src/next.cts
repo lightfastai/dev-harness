@@ -4,6 +4,7 @@ const path = require("node:path");
 const CONFIG_FILENAMES = ["related-projects.json"];
 const DEFAULT_PORTLESS_NAME = "mfe";
 const DEFAULT_PORTLESS_TLD = "localhost";
+const DEFAULT_PORTLESS_PORT = 1355;
 const DEFAULT_MFE_CONFIG = "microfrontends.json";
 
 type Env = Record<string, string | undefined>;
@@ -16,6 +17,7 @@ type PackageConfig = {
 	configPath?: string;
 	portless?: {
 		name?: string;
+		port?: number | string;
 		tld?: string;
 	};
 	microfrontends?: {
@@ -35,6 +37,7 @@ type OriginsOptions = {
 	config?: PackageConfig;
 	configPath?: string;
 	includeWildcard?: boolean;
+	includePort?: boolean | "both";
 	allowMissingConfig?: boolean;
 	origins?: string[];
 };
@@ -69,6 +72,7 @@ function getPortlessMfeDevOrigins({
 	config,
 	configPath,
 	includeWildcard = true,
+	includePort = false,
 	allowMissingConfig = false,
 }: OriginsOptions = {}): string[] {
 	const normalized = resolveOptionalPackageConfig({ cwd, config, configPath });
@@ -87,6 +91,7 @@ function getPortlessMfeDevOrigins({
 	const microfrontends = normalized?.microfrontends ?? {};
 	const portlessName = name ?? portless.name ?? DEFAULT_PORTLESS_NAME;
 	const portlessTld = tld ?? env.PORTLESS_TLD ?? portless.tld ?? DEFAULT_PORTLESS_TLD;
+	const portlessPort = parsePort(env.PORTLESS_PORT) ?? parsePort(portless.port) ?? DEFAULT_PORTLESS_PORT;
 	const portlessNames = [portlessName];
 
 	if (normalized) {
@@ -110,9 +115,26 @@ function getPortlessMfeDevOrigins({
 	return unique(
 		portlessNames.flatMap((value) => {
 			const host = `${value}.${portlessTld}`;
-			return includeWildcard ? [host, `*.${host}`] : [host];
+			const hosts = includePort === "both"
+				? [host, `${host}:${portlessPort}`]
+				: [`${host}${includePort ? `:${portlessPort}` : ""}`];
+
+			return hosts.flatMap((originHost) => (
+				includeWildcard ? [originHost, `*.${originHost}`] : [originHost]
+			));
 		}),
 	);
+}
+
+function parsePort(value: string | number | undefined | null): number | undefined {
+	if (value === undefined || value === null || value === "") {
+		return undefined;
+	}
+	const port = Number(value);
+	if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+		return undefined;
+	}
+	return port;
 }
 
 function resolveOptionalPackageConfig({

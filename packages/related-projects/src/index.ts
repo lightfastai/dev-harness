@@ -130,6 +130,7 @@ export interface GetPortlessMfeDevOriginsOptions {
 	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
 	configPath?: string;
 	includeWildcard?: boolean;
+	includePort?: boolean | "both";
 	allowMissingConfig?: boolean;
 }
 
@@ -518,6 +519,7 @@ export function getPortlessMfeDevOrigins({
 	config,
 	configPath,
 	includeWildcard = true,
+	includePort = false,
 	allowMissingConfig = false,
 }: GetPortlessMfeDevOriginsOptions = {}): string[] {
 	const normalized = resolveOptionalPackageConfigForApi({ cwd, config, configPath });
@@ -535,6 +537,7 @@ export function getPortlessMfeDevOrigins({
 	const fallbackConfig = normalized ?? normalizePackageConfig({}, { root: cwd });
 	const portlessName = name ?? fallbackConfig.portless.name;
 	const portlessTld = tld ?? env.PORTLESS_TLD ?? fallbackConfig.portless.tld;
+	const portlessPort = parsePort(env.PORTLESS_PORT) ?? fallbackConfig.portless.port;
 	const portlessNames = [portlessName];
 
 	if (normalized) {
@@ -554,7 +557,13 @@ export function getPortlessMfeDevOrigins({
 	return unique(
 		portlessNames.flatMap((value) => {
 			const host = `${value}.${portlessTld}`;
-			return includeWildcard ? [host, `*.${host}`] : [host];
+			const hosts = includePort === "both"
+				? [host, `${host}:${portlessPort}`]
+				: [`${host}${includePort ? `:${portlessPort}` : ""}`];
+
+			return hosts.flatMap((originHost) => (
+				includeWildcard ? [originHost, `*.${originHost}`] : [originHost]
+			));
 		}),
 	);
 }

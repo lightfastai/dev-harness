@@ -5,8 +5,9 @@ import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
-import type { IncomingHttpHeaders, IncomingMessage, Server, ServerResponse } from "node:http";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
+import { buildBridgeRequestHeaders, stripHopByHopHeaders } from "./bridge-headers.js";
 import {
 	addTurboDevEnvMode,
 	createVercelMicrofrontendsDevEnv,
@@ -791,47 +792,6 @@ function proxyUpgradeToPortlessApp({
 		socket.destroy();
 	});
 	proxyReq.end();
-}
-
-function buildBridgeRequestHeaders(
-	sourceHeaders: IncomingHttpHeaders,
-	target: URL,
-): Record<string, string | string[]> {
-	const headers = stripHopByHopHeaders(sourceHeaders);
-	deleteHeader(headers, "x-portless");
-	deleteHeader(headers, "x-portless-hops");
-	headers.host = target.host;
-	return headers;
-}
-
-function stripHopByHopHeaders(
-	sourceHeaders: IncomingHttpHeaders,
-): Record<string, string | string[]> {
-	const blockedHeaders = new Set([
-		"connection",
-		"keep-alive",
-		"proxy-connection",
-		"te",
-		"trailer",
-		"transfer-encoding",
-		"upgrade",
-	]);
-	const headers: Record<string, string | string[]> = {};
-	for (const [key, value] of Object.entries(sourceHeaders)) {
-		if (value !== undefined && !blockedHeaders.has(key.toLowerCase())) {
-			headers[key] = value;
-		}
-	}
-	return headers;
-}
-
-function deleteHeader(headers: Record<string, unknown>, headerName: string): void {
-	const normalizedHeaderName = headerName.toLowerCase();
-	for (const key of Object.keys(headers)) {
-		if (key.toLowerCase() === normalizedHeaderName) {
-			delete headers[key];
-		}
-	}
 }
 
 function writeRawHttpResponse(

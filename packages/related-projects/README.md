@@ -96,6 +96,8 @@ export default withPortlessMfeDev(withMicrofrontends(nextConfig));
 
 `withPortlessMfeDev` adds `allowedDevOrigins` entries for the configured Portless host and for each application in the configured Vercel Microfrontends file. Wildcard origins are included by default. Existing `allowedDevOrigins` entries are preserved.
 
+For Next.js Server Actions behind the local Microfrontends proxy, use `getPortlessMfeDevOrigins({ includePort: "both" })` in `experimental.serverActions.allowedOrigins`. This includes bare HTTPS hosts such as `lightfast.localhost` and explicit-port hosts such as `lightfast.localhost:1355` without allowing unsafe values like `Origin: null`.
+
 ## CLI
 
 The package installs the `portless-mfe` bin.

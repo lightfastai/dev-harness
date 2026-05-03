@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { buildBridgeRequestHeaders } from "../src/bridge-headers.js";
 import {
 	addTurboDevEnvMode,
 	branchToPrefix,
@@ -177,6 +178,52 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 		"www.mfe.localhost",
 		"*.www.mfe.localhost",
 	]);
+	assert.deepEqual(getPortlessMfeDevOrigins({ cwd: root, includePort: true }), [
+		"mfe.localhost:1355",
+		"*.mfe.localhost:1355",
+		"app.mfe.localhost:1355",
+		"*.app.mfe.localhost:1355",
+		"platform.mfe.localhost:1355",
+		"*.platform.mfe.localhost:1355",
+		"www.mfe.localhost:1355",
+		"*.www.mfe.localhost:1355",
+	]);
+	assert.deepEqual(getPortlessMfeDevOrigins({ cwd: root, includePort: "both" }), [
+		"mfe.localhost",
+		"*.mfe.localhost",
+		"mfe.localhost:1355",
+		"*.mfe.localhost:1355",
+		"app.mfe.localhost",
+		"*.app.mfe.localhost",
+		"app.mfe.localhost:1355",
+		"*.app.mfe.localhost:1355",
+		"platform.mfe.localhost",
+		"*.platform.mfe.localhost",
+		"platform.mfe.localhost:1355",
+		"*.platform.mfe.localhost:1355",
+		"www.mfe.localhost",
+		"*.www.mfe.localhost",
+		"www.mfe.localhost:1355",
+		"*.www.mfe.localhost:1355",
+	]);
+	assert.deepEqual(
+		getPortlessMfeDevOrigins({
+			cwd: root,
+			env: { PORTLESS_PORT: "2468" },
+			includePort: "both",
+			includeWildcard: false,
+		}),
+		[
+			"mfe.localhost",
+			"mfe.localhost:2468",
+			"app.mfe.localhost",
+			"app.mfe.localhost:2468",
+			"platform.mfe.localhost",
+			"platform.mfe.localhost:2468",
+			"www.mfe.localhost",
+			"www.mfe.localhost:2468",
+		],
+	);
 
 	const wrapped = withPortlessMfeDev(
 		{ allowedDevOrigins: ["custom.localhost"] },
@@ -225,6 +272,33 @@ test("CommonJS Next wrapper exports the same helpers", () => {
 		).allowedDevOrigins,
 		["custom.localhost", "mfe.localhost"],
 	);
+});
+
+test("bridge request headers rewrite host and strip stale proxy forwarding headers", () => {
+	const headers = buildBridgeRequestHeaders(
+		{
+			host: "localhost:6924",
+			origin: "http://lightfast.localhost:1355",
+			"x-forwarded-for": "127.0.0.1",
+			"x-forwarded-host": "localhost",
+			"x-forwarded-port": "443",
+			"x-forwarded-proto": "https",
+			"x-portless": "1",
+			"x-portless-hops": "2",
+			connection: "keep-alive",
+		},
+		new URL("http://app.lightfast.localhost:1355/sign-in"),
+	);
+
+	assert.equal(headers.host, "app.lightfast.localhost:1355");
+	assert.equal(headers.origin, "http://lightfast.localhost:1355");
+	assert.equal(headers["x-forwarded-for"], "127.0.0.1");
+	assert.equal(headers["x-forwarded-host"], undefined);
+	assert.equal(headers["x-forwarded-port"], undefined);
+	assert.equal(headers["x-forwarded-proto"], undefined);
+	assert.equal(headers["x-portless"], undefined);
+	assert.equal(headers["x-portless-hops"], undefined);
+	assert.equal(headers.connection, undefined);
 });
 
 test("package export map supports intended ESM imports", () => {

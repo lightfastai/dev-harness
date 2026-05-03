@@ -1,6 +1,6 @@
 {
   "name": "@lightfastai/related-projects",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "Development helpers for Lightfast related projects using Vercel microfrontends and portless.",
   "license": "UNLICENSED",
   "type": "module",
