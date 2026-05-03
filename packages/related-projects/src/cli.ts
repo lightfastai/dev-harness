@@ -57,7 +57,7 @@ interface PortlessAppBridge {
 }
 
 interface MicrofrontendsProxyRuntime {
-	proxy: ChildProcess;
+	proxy?: ChildProcess;
 	bridges: PortlessAppBridge[];
 }
 
@@ -208,14 +208,18 @@ async function handleDev(args: string[]): Promise<void> {
 		localApps,
 		env: process.env,
 	});
-	const shouldStartProxy = !isTurboRunCommand(commandArgs);
-	const proxyRuntime = shouldStartProxy
-		? await startMicrofrontendsProxyRuntime({ config, result, localApps, env: childEnv })
-		: undefined;
+	const proxyRuntime = await startMicrofrontendsProxyRuntime({
+		config,
+		result,
+		localApps,
+		env: childEnv,
+		startProxy: !isTurboRunCommand(commandArgs),
+	});
 	const devCommandArgs = disableTurboFrameworkInference(addTurboDevEnvMode(commandArgs));
+	const devEnv = prepareDevCommandEnv(commandArgs, childEnv);
 	const child = spawn(devCommandArgs[0], devCommandArgs.slice(1), {
 		cwd: config.root,
-		env: childEnv,
+		env: devEnv,
 		stdio: "inherit",
 	});
 	let shuttingDown = false;
@@ -233,7 +237,7 @@ async function handleDev(args: string[]): Promise<void> {
 	}
 
 	if (proxyRuntime) {
-		proxyRuntime.proxy.on("exit", (code, signal) => {
+		proxyRuntime.proxy?.on("exit", (code, signal) => {
 			if (shuttingDown) {
 				return;
 			}
@@ -299,7 +303,7 @@ async function handleProxy(args: string[]): Promise<void> {
 		});
 	}
 
-	proxyRuntime.proxy.on("exit", (code, signal) => {
+	proxyRuntime.proxy?.on("exit", (code, signal) => {
 		closePortlessAppBridges(proxyRuntime.bridges);
 		if (signal) {
 			process.exit(signalExitCode(signal));
@@ -598,17 +602,26 @@ async function startMicrofrontendsProxyRuntime({
 	result,
 	localApps,
 	env,
+	startProxy = true,
 }: {
 	config: { root: string };
 	result: VercelMicrofrontendsDevConfigResult;
 	localApps: string[];
 	env: Env;
+	startProxy?: boolean;
 }): Promise<MicrofrontendsProxyRuntime> {
 	const bridges = await startPortlessAppBridges({ result, localApps });
+	let proxy: ChildProcess | undefined;
 	try {
-		const proxy = await startMicrofrontendsProxy({ config, result, localApps, env });
+		if (!startProxy) {
+			return { bridges };
+		}
+		proxy = await startMicrofrontendsProxy({ config, result, localApps, env });
 		return { proxy, bridges };
 	} catch (error) {
+		if (proxy && !proxy.killed) {
+			proxy.kill("SIGTERM");
+		}
 		closePortlessAppBridges(bridges);
 		throw error;
 	}
@@ -873,7 +886,7 @@ function stopMicrofrontendsProxyRuntime(
 	if (!runtime) {
 		return;
 	}
-	if (!runtime.proxy.killed) {
+	if (runtime.proxy && !runtime.proxy.killed) {
 		runtime.proxy.kill(signal);
 	}
 	closePortlessAppBridges(runtime.bridges);
@@ -944,6 +957,19 @@ function isTurboRunCommand(commandArgs: string[]): boolean {
 		commandArgs[1] === "exec" &&
 		commandArgs[2] === "turbo" &&
 		commandArgs.includes("run");
+}
+
+function prepareDevCommandEnv(commandArgs: string[], env: Env): Env {
+	if (!isTurboRunCommand(commandArgs)) {
+		return env;
+	}
+
+	const nextEnv = { ...env };
+	delete nextEnv.PORT;
+	delete nextEnv.HOST;
+	delete nextEnv.PORTLESS_URL;
+	delete nextEnv.MFE_LOCAL_PROXY_PORT;
+	return nextEnv;
 }
 
 function spawnWithFallback(

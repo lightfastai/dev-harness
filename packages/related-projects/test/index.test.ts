@@ -342,6 +342,9 @@ test("createVercelMicrofrontendsDevConfig infers arbitrary app directories", asy
 					local: number;
 				};
 			};
+			www: {
+				routing: Array<{ paths: string[] }>;
+			};
 		};
 	};
 	assert.equal(typeof generatedConfig.applications.platform.development.local, "number");
@@ -353,6 +356,10 @@ test("createVercelMicrofrontendsDevConfig infers arbitrary app directories", asy
 	for (const port of Object.values(result.appBridgePorts)) {
 		assert.equal(port >= 5100 && port <= 8999, true);
 	}
+	assert.equal(
+		generatedConfig.applications.www.routing[0].paths.includes("/vc-ap-4eae35/:path*"),
+		true,
+	);
 });
 
 test("selectLocalAppNames defaults to all apps and validates requested local apps", () => {

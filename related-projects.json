@@ -6,7 +6,7 @@
     "https": false
   },
   "microfrontends": {
-    "config": "apps/app/microfrontends.json",
+    "config": "microfrontends.json",
     "apps": {}
   }
 }

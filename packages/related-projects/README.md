@@ -64,7 +64,7 @@ The current repo config is:
     "https": false
   },
   "microfrontends": {
-    "config": "apps/app/microfrontends.json",
+    "config": "microfrontends.json",
     "apps": {}
   }
 }
@@ -111,12 +111,17 @@ pnpm mfe:url
 
 Those scripts build this package first, then call `portless-mfe`.
 
-App dev scripts that run a local Vercel Microfrontends app through Portless should pass the app bridge port from `microfrontends port`:
+For the normal Turbo dev flow, keep the source Vercel Microfrontends config at the path named by `microfrontends.config`. In this sandbox that file is `microfrontends.json` at the repo root. `portless-mfe dev` writes `microfrontends.local.json` next to that source file and injects the generated path into `VC_MICROFRONTENDS_CONFIG`.
+
+When the wrapped command is a Turbo dev command, Turbo owns the local Microfrontends proxy. `portless-mfe` still starts bridge servers for each local app so the generated `development.local` ports can forward to the app-specific Portless URLs:
 
 ```sh
-portless run --app-port $(microfrontends port) next dev --turbo
-portless run --app-port $(microfrontends port) next dev --turbopack
+pnpm dev
+pnpm dev:app
+pnpm dev:www
 ```
+
+For non-Turbo dev commands, `portless-mfe dev` starts the Vercel Microfrontends proxy runtime itself.
 
 Available commands:
 
@@ -132,7 +137,7 @@ portless-mfe identity [--path <path>] [--app-name <name>] [--json]
 Command behavior:
 
 - `turbo`: starts the Portless proxy, then runs `portless-mfe dev` through `portless run`. Turbo dev commands get `--env-mode=loose` unless an env mode is already present.
-- `dev`: generates `microfrontends.local.json` next to the configured Vercel Microfrontends config, sets the local microfrontends environment variables, then runs the command after `--`. For non-Turbo commands it also starts the Vercel Microfrontends proxy runtime.
+- `dev`: generates `microfrontends.local.json` next to the configured Vercel Microfrontends config, sets the local microfrontends environment variables, starts local app bridge servers, then runs the command after `--`. For non-Turbo commands it also starts the Vercel Microfrontends proxy runtime.
 - `run`: starts the Portless proxy, then runs `portless-mfe dev` through `portless run` for the command after `--`.
 - `proxy`: generates the local microfrontends config and starts the Vercel Microfrontends proxy runtime.
 - `url`: prints the resolved Portless URL. Pass `--app <name>` to resolve an application URL from the Vercel Microfrontends config.
@@ -154,6 +159,8 @@ When `dev` or `proxy` generates local microfrontends state, it sets:
 - `PORTLESS_MFE_LOCAL_APPS`
 - `VC_MICROFRONTENDS_CONFIG`
 - `VC_MICROFRONTENDS_CONFIG_FILE_NAME`
+
+The generated local config also adds each routed app's asset prefix path, such as `/vc-ap-<hash>/:path*`, to that app's routing. This keeps Next.js static chunks, CSS, and images from falling through to the default app when the source config only lists user-facing routes such as `/docs`.
 
 ## API
 

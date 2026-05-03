@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -630,16 +631,19 @@ export async function createVercelMicrofrontendsDevConfig({
 			localProxyPort,
 		},
 		applications: Object.fromEntries(
-			Object.entries(applications).map(([appName, appConfig]) => [
-				appName,
-				{
+			Object.entries(applications).map(([appName, appConfig]) => {
+				const runtimeAppConfig = {
 					...appConfig,
 					development: {
 						...(appConfig.development ?? {}),
 						local: appBridgePorts[appName],
 					},
-				},
-			]),
+				};
+				return [
+					appName,
+					addLocalAssetPrefixRoute(appName, runtimeAppConfig),
+				];
+			}),
 		),
 	};
 
@@ -663,6 +667,68 @@ export async function createVercelMicrofrontendsDevConfig({
 		runtimeConfigFilename: RUNTIME_CONFIG_FILENAME,
 		localAppNames: Object.keys(applications),
 	};
+}
+
+function addLocalAssetPrefixRoute(
+	appName: string,
+	appConfig: MicrofrontendApplicationConfig,
+): MicrofrontendApplicationConfig {
+	const routing = appConfig.routing;
+	if (!Array.isArray(routing) || routing.length === 0) {
+		return appConfig;
+	}
+
+	const assetPrefix =
+		typeof appConfig.assetPrefix === "string"
+			? appConfig.assetPrefix
+			: generateDefaultAssetPrefix(appName);
+	const assetPath = `/${assetPrefix}/:path*`;
+	if (
+		routing.some((group) =>
+			isRoutingGroup(group) &&
+			group.paths.some((routePath) => routePath === assetPath)
+		)
+	) {
+		return appConfig;
+	}
+
+	const [firstGroup, ...restGroups] = routing;
+	if (!isRoutingGroup(firstGroup)) {
+		return appConfig;
+	}
+
+	return {
+		...appConfig,
+		routing: [
+			{
+				...firstGroup,
+				paths: [...firstGroup.paths, assetPath],
+			},
+			...restGroups,
+		],
+	};
+}
+
+function isRoutingGroup(
+	value: unknown,
+): value is { paths: string[]; [key: string]: unknown } {
+	return Boolean(
+		value &&
+		typeof value === "object" &&
+		Array.isArray((value as { paths?: unknown }).paths) &&
+		(value as { paths: unknown[] }).paths.every(
+			(pathValue) => typeof pathValue === "string",
+		),
+	);
+}
+
+function generateDefaultAssetPrefix(appName: string): string {
+	return `vc-ap-${crypto
+		.createHash("md5")
+		.update(appName)
+		.digest("hex")
+		.slice(0, 6)
+		.padStart(6, "0")}`;
 }
 
 export function normalizePackageConfig(
