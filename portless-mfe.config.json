@@ -1,5 +1,5 @@
 {
-  "$schema": "./packages/portless-mfe-dev/schema/config.schema.json",
+  "$schema": "./node_modules/@lightfastai/related-projects/schema/config.schema.json",
   "portless": {
     "name": "mfe",
     "port": 1355,

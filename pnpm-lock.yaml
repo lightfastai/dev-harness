@@ -8,9 +8,9 @@ importers:
 
   .:
     devDependencies:
-      '@repo/portless-mfe-dev':
+      '@lightfastai/related-projects':
         specifier: workspace:*
-        version: link:packages/portless-mfe-dev
+        version: link:packages/related-projects
       portless:
         specifier: ^0.12.0
         version: 0.12.0
@@ -36,9 +36,9 @@ importers:
         specifier: ^19.0.0
         version: 19.2.5(react@19.2.5)
     devDependencies:
-      '@repo/portless-mfe-dev':
+      '@lightfastai/related-projects':
         specifier: workspace:*
-        version: link:../../packages/portless-mfe-dev
+        version: link:../../packages/related-projects
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
@@ -54,9 +54,9 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@repo/portless-mfe-dev':
+      '@lightfastai/related-projects':
         specifier: workspace:*
-        version: link:../../packages/portless-mfe-dev
+        version: link:../../packages/related-projects
       electron:
         specifier: ^33.0.0
         version: 33.4.11
@@ -76,9 +76,9 @@ importers:
         specifier: ^19.0.0
         version: 19.2.5(react@19.2.5)
     devDependencies:
-      '@repo/portless-mfe-dev':
+      '@lightfastai/related-projects':
         specifier: workspace:*
-        version: link:../../packages/portless-mfe-dev
+        version: link:../../packages/related-projects
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
@@ -92,7 +92,7 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
-  packages/portless-mfe-dev:
+  packages/related-projects:
     dependencies:
       '@vercel/related-projects':
         specifier: 1.1.0

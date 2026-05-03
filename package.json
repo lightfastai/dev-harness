@@ -6,21 +6,21 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "predev": "pnpm --filter @repo/portless-mfe-dev build",
+    "predev": "pnpm --filter @lightfastai/related-projects build",
     "dev": "portless-mfe turbo run dev --ui=tui --filter=app --filter=www",
     "dev:apps": "pnpm dev",
-    "predev:app": "pnpm --filter @repo/portless-mfe-dev build",
+    "predev:app": "pnpm --filter @lightfastai/related-projects build",
     "dev:app": "portless-mfe turbo run dev --filter=app",
-    "predev:desktop": "pnpm --filter @repo/portless-mfe-dev build",
+    "predev:desktop": "pnpm --filter @lightfastai/related-projects build",
     "dev:desktop": "pnpm --filter desktop dev",
-    "predev:www": "pnpm --filter @repo/portless-mfe-dev build",
+    "predev:www": "pnpm --filter @lightfastai/related-projects build",
     "dev:www": "portless-mfe turbo run dev --filter=www",
-    "premfe:url": "pnpm --filter @repo/portless-mfe-dev build",
+    "premfe:url": "pnpm --filter @lightfastai/related-projects build",
     "mfe:url": "portless-mfe url",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
-    "@repo/portless-mfe-dev": "workspace:*",
+    "@lightfastai/related-projects": "workspace:*",
     "portless": "^0.12.0",
     "turbo": "~2.9.8",
     "typescript": "^5.0.0"

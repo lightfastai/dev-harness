@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://repo.local/portless-mfe-dev/config.schema.json",
-  "title": "Portless MFE Dev Config",
+  "$id": "https://lightfast.ai/schemas/related-projects/config.schema.json",
+  "title": "Lightfast Related Projects Config",
   "type": "object",
   "additionalProperties": false,
   "properties": {

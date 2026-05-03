@@ -7,7 +7,7 @@
     "typecheck": "echo \"(no typecheck for desktop)\""
   },
   "dependencies": {
-    "@repo/portless-mfe-dev": "workspace:*",
+    "@lightfastai/related-projects": "workspace:*",
     "electron": "^33.0.0"
   }
 }
