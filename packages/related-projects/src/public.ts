@@ -24,7 +24,6 @@ export type {
 	PortAvailable,
 	PortlessMfeConfig,
 	PortRange,
-	RelatedProjectConfig,
 	ResolvePortlessApplicationUrlOptions,
 	ResolvePortlessMfeRuntimeOptions,
 	ResolvePortlessUrlOptions,

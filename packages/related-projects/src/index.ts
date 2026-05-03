@@ -38,15 +38,7 @@ export interface PortlessMfeConfig {
 		apps?: Record<string, ApplicationOverride>;
 		proxyPortRange?: PortRange;
 	};
-	relatedProjects?: Record<string, RelatedProjectConfig>;
 	[key: string]: unknown;
-}
-
-export interface RelatedProjectConfig {
-	projectName?: string;
-	fallbackHost?: string;
-	portlessName?: string;
-	path?: string;
 }
 
 export interface NormalizedPortlessMfeConfig {
@@ -63,7 +55,6 @@ export interface NormalizedPortlessMfeConfig {
 		apps: Record<string, ApplicationOverride>;
 		proxyPortRange: NormalizedPortRange;
 	};
-	relatedProjects: Record<string, RelatedProjectConfig>;
 }
 
 export interface MicrofrontendApplicationConfig {
@@ -680,7 +671,6 @@ export function normalizePackageConfig(
 ): NormalizedPortlessMfeConfig {
 	const portless = rawConfig?.portless ?? {};
 	const microfrontends = rawConfig?.microfrontends ?? {};
-	const relatedProjects = rawConfig?.relatedProjects ?? {};
 
 	return {
 		root,
@@ -699,7 +689,6 @@ export function normalizePackageConfig(
 				max: parsePort(microfrontends.proxyPortRange?.max) ?? DEFAULT_PROXY_PORT_RANGE.max,
 			},
 		},
-		relatedProjects,
 	};
 }
 

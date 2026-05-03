@@ -1,77 +1,77 @@
-import { withRelatedProject } from "@vercel/related-projects";
+import fs from "node:fs";
+import path from "node:path";
 import {
 	loadPortlessMfeConfigSync,
 	normalizePackageConfig,
-	resolvePortlessUrl,
+	resolvePortlessApplicationUrl,
 	withTargetPath,
 } from "./index.js";
 import type {
 	DetectWorktreePrefix,
 	Env,
 	GetPortlessUrl,
+	MicrofrontendApplicationConfig,
+	MicrofrontendsSourceConfig,
 	NormalizedPortlessMfeConfig,
 	PortlessMfeConfig,
 } from "./index.js";
 
 export interface ResolveRelatedProjectUrlOptions {
-	key?: string;
-	projectName?: string;
-	fallbackHost?: string;
-	portlessName?: string;
 	path?: string;
 	cwd?: string;
 	env?: Env;
 	config?: PortlessMfeConfig | NormalizedPortlessMfeConfig;
 	configPath?: string;
+	sourceConfig?: MicrofrontendsSourceConfig;
 	getPortlessUrl?: GetPortlessUrl;
 	detectWorktreePrefix?: DetectWorktreePrefix;
 }
 
-export function resolveRelatedProjectUrl({
-	key,
-	projectName,
-	fallbackHost,
-	portlessName,
-	path,
-	cwd = process.cwd(),
-	env = process.env,
-	config,
-	configPath,
-	getPortlessUrl,
-	detectWorktreePrefix,
-}: ResolveRelatedProjectUrlOptions = {}): string {
-	const normalized = resolveConfig({ cwd, config, configPath });
-	const relatedConfig = key ? normalized.relatedProjects?.[key] : undefined;
-	const resolvedKey = key ?? projectName ?? portlessName;
-	const resolvedProjectName = projectName ?? relatedConfig?.projectName ?? resolvedKey;
-
-	if (!resolvedProjectName) {
-		throw new Error("resolveRelatedProjectUrl requires a projectName or key.");
-	}
-
-	const resolvedPath = path ?? relatedConfig?.path;
-	const resolvedPortlessName =
-		portlessName ??
-		relatedConfig?.portlessName ??
-		(resolvedKey ? `${resolvedKey}.${normalized.portless.name}` : resolvedProjectName);
-	const localUrl = resolvePortlessUrl({
-		name: resolvedPortlessName,
-		cwd: normalized.root,
-		env,
-		config: normalized,
+export function resolveRelatedProjectUrl(
+	projectName: string,
+	{
+		path: targetPath,
+		cwd = process.cwd(),
+		env = process.env,
+		config,
+		configPath,
+		sourceConfig,
 		getPortlessUrl,
 		detectWorktreePrefix,
-		preferCurrentPortlessUrl: false,
-	});
-	const runtimeFallbackHost = isVercelRuntime(env)
-		? fallbackHost ?? relatedConfig?.fallbackHost ?? localUrl
-		: localUrl;
-	const relatedUrl = withRelatedProject({
-		projectName: resolvedProjectName,
-		defaultHost: runtimeFallbackHost,
-	});
+	}: ResolveRelatedProjectUrlOptions = {},
+): string {
+	if (!projectName) {
+		throw new Error("resolveRelatedProjectUrl requires a project name.");
+	}
 
-	return resolvedPath ? withTargetPath(relatedUrl, resolvedPath) : relatedUrl;
+	const normalized = resolveConfig({ cwd, config, configPath });
+	const resolvedSourceConfig = sourceConfig ?? readMicrofrontendsConfig(normalized);
+	const applications = resolvedSourceConfig.applications ?? {};
+	const appName = resolveRequestedApplicationName(applications, projectName);
+
+	if (!appName) {
+		throw new Error(
+			`Unknown app "${projectName}". Available apps: ${Object.keys(applications).join(", ")}`,
+		);
+	}
+
+	if (env.NODE_ENV === "development") {
+		return resolvePortlessApplicationUrl({
+			app: appName,
+			path: targetPath,
+			cwd: normalized.root,
+			env,
+			config: normalized,
+			sourceConfig: resolvedSourceConfig,
+			getPortlessUrl,
+			detectWorktreePrefix,
+		});
+	}
+
+	const fallbackUrl = normalizeFallbackUrl(
+		resolveDevelopmentFallback(appName, applications[appName]),
+	);
+	return targetPath ? withTargetPath(fallbackUrl, targetPath) : fallbackUrl;
 }
 
 function resolveConfig({
@@ -90,14 +90,63 @@ function resolveConfig({
 		});
 	}
 
-	try {
-		return loadPortlessMfeConfigSync({ cwd, configPath });
-	} catch {
-		return normalizePackageConfig({}, { root: cwd, configPath });
-	}
+	return loadPortlessMfeConfigSync({ cwd, configPath });
 }
 
-function isVercelRuntime(env: Env): boolean {
-	const vercelEnv = env.VERCEL_ENV ?? env.NEXT_PUBLIC_VERCEL_ENV;
-	return env.VERCEL === "1" || vercelEnv === "production" || vercelEnv === "preview";
+function readMicrofrontendsConfig(
+	config: PortlessMfeConfig | NormalizedPortlessMfeConfig,
+): MicrofrontendsSourceConfig {
+	const normalized = normalizePackageConfig(config, { root: config.root ?? process.cwd() });
+	const sourcePath = path.resolve(normalized.root, normalized.microfrontends.config);
+	return JSON.parse(fs.readFileSync(sourcePath, "utf8")) as MicrofrontendsSourceConfig;
+}
+
+function resolveRequestedApplicationName(
+	applications: Record<string, MicrofrontendApplicationConfig> = {},
+	requestedApp: string,
+): string | undefined {
+	if (Object.hasOwn(applications, requestedApp)) {
+		return requestedApp;
+	}
+
+	const matches = Object.entries(applications)
+		.filter(([, appConfig]) => {
+			const packageName = appConfig?.packageName;
+			return packageName === requestedApp || packageShortName(packageName ?? "") === requestedApp;
+		})
+		.map(([appName]) => appName);
+
+	if (matches.length === 1) {
+		return matches[0];
+	}
+
+	return undefined;
+}
+
+function resolveDevelopmentFallback(
+	appName: string,
+	appConfig: MicrofrontendApplicationConfig = {},
+): string {
+	const fallback = appConfig.development?.fallback;
+	if (typeof fallback !== "string" || !fallback.trim()) {
+		throw new Error(`App "${appName}" must define development.fallback in microfrontends config.`);
+	}
+
+	return fallback.trim();
+}
+
+function normalizeFallbackUrl(fallback: string): string {
+	if (/^https?:\/\//i.test(fallback)) {
+		return fallback;
+	}
+
+	const host = fallback.split(/[/?#]/, 1)[0] ?? fallback;
+	const hostname = host.split(":", 1)[0] ?? host;
+	const protocol =
+		hostname === "localhost" || hostname.endsWith(".localhost") ? "http" : "https";
+	return `${protocol}://${fallback}`;
+}
+
+function packageShortName(name: string): string {
+	return name.split("/").pop() ?? name;
 }

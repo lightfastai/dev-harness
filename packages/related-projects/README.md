@@ -79,7 +79,6 @@ Supported config sections:
 - `microfrontends.config`: path to the Vercel Microfrontends JSON config. Default: `microfrontends.json`.
 - `microfrontends.apps`: per-application overrides. A string value is treated as an app directory. An object may set `dir`, `path`, or `portlessName`.
 - `microfrontends.proxyPortRange`: `{ "min": number, "max": number }` range for the generated local proxy port. Default: `9000` through `9999`.
-- `relatedProjects`: keyed settings for `resolveRelatedProjectUrl`. Each entry may set `projectName`, `fallbackHost`, `portlessName`, or `path`.
 
 ## Next.js
 
@@ -185,9 +184,11 @@ Related-project URL helper:
 
 ```ts
 import { resolveRelatedProjectUrl } from "@lightfastai/related-projects/related-projects";
+
+const wwwDefaultHost = resolveRelatedProjectUrl("www");
 ```
 
-`resolveRelatedProjectUrl` reads `relatedProjects` from `related-projects.json` when a `key` is provided. Outside Vercel runtime it uses the local Portless URL as the `@vercel/related-projects` default host. In Vercel runtime it uses the configured `fallbackHost` when one is present.
+`resolveRelatedProjectUrl` reads the configured Vercel Microfrontends file and resolves the requested application by name. When `NODE_ENV` is `development`, it returns the local Portless application URL. Otherwise it returns the application's `development.fallback`, normalized to a full URL. Apps can use this as the `defaultHost` for `withRelatedProject`; this package does not import or call `@vercel/related-projects`.
 
 Config schema export:
 

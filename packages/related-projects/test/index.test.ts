@@ -493,24 +493,12 @@ test("resolveRuntimeIdentity is Electron-agnostic and suffixes linked worktrees"
 	assert.equal(linked.worktreePrefix, "fix-ui");
 });
 
-test("resolveRelatedProjectUrl keeps Vercel related-project fallback with local Portless URLs", () => {
-	const root = createLightfastFixtureWorkspace();
-	const localUrl = resolveRelatedProjectUrl({
-		key: "platform",
+test("resolveRelatedProjectUrl resolves development URLs through Portless microfrontends", () => {
+	const root = createFixtureWorkspace();
+	const localUrl = resolveRelatedProjectUrl("platform", {
 		cwd: root,
 		env: {
-			PORTLESS_HTTPS: "0",
-			PORTLESS_PORT: "1355",
-		},
-		getPortlessUrl: () => undefined,
-		detectWorktreePrefix: () => "fix-ui",
-	});
-	const productionFallback = resolveRelatedProjectUrl({
-		key: "platform",
-		cwd: root,
-		env: {
-			VERCEL: "1",
-			VERCEL_ENV: "production",
+			NODE_ENV: "development",
 			PORTLESS_HTTPS: "0",
 			PORTLESS_PORT: "1355",
 		},
@@ -518,8 +506,106 @@ test("resolveRelatedProjectUrl keeps Vercel related-project fallback with local 
 		detectWorktreePrefix: () => "fix-ui",
 	});
 
-	assert.equal(localUrl, "http://fix-ui.platform.lightfast.localhost:1355/");
-	assert.equal(productionFallback, "https://lightfast-platform.vercel.app");
+	assert.equal(localUrl, "http://fix-ui.platform.mfe.localhost:1355/");
+});
+
+test("resolveRelatedProjectUrl resolves production fallbacks from microfrontends config", () => {
+	const root = createLightfastFixtureWorkspace();
+
+	assert.equal(
+		resolveRelatedProjectUrl("lightfast-app", {
+			cwd: root,
+			env: {
+				NODE_ENV: "production",
+			},
+		}),
+		"https://lightfast-app.vercel.app",
+	);
+	assert.equal(
+		resolveRelatedProjectUrl("lightfast-www", {
+			path: "/docs",
+			cwd: root,
+			env: {
+				NODE_ENV: "production",
+			},
+		}),
+		"https://lightfast-www.vercel.app/docs",
+	);
+});
+
+test("resolveRelatedProjectUrl normalizes localhost and full fallback URLs", () => {
+	const root = createFixtureWorkspace();
+	const sourceConfig = {
+		applications: {
+			app: {
+				development: {
+					fallback: "app.localhost",
+				},
+			},
+			api: {
+				development: {
+					fallback: "http://api.localhost:3000",
+				},
+			},
+		},
+	};
+
+	assert.equal(
+		resolveRelatedProjectUrl("app", {
+			cwd: root,
+			env: {
+				NODE_ENV: "production",
+			},
+			sourceConfig,
+		}),
+		"http://app.localhost",
+	);
+	assert.equal(
+		resolveRelatedProjectUrl("api", {
+			path: "/ping",
+			cwd: root,
+			env: {
+				NODE_ENV: "production",
+			},
+			sourceConfig,
+		}),
+		"http://api.localhost:3000/ping",
+	);
+});
+
+test("resolveRelatedProjectUrl reports unknown microfrontend apps", () => {
+	const root = createFixtureWorkspace();
+
+	assert.throws(
+		() =>
+			resolveRelatedProjectUrl("missing", {
+				cwd: root,
+				env: {
+					NODE_ENV: "production",
+				},
+			}),
+		/Unknown app "missing"\. Available apps: app, platform, www/,
+	);
+});
+
+test("resolveRelatedProjectUrl requires microfrontends fallback outside development", () => {
+	const root = createFixtureWorkspace();
+
+	assert.throws(
+		() =>
+			resolveRelatedProjectUrl("app", {
+				cwd: root,
+				env: {
+					NODE_ENV: "production",
+				},
+				sourceConfig: {
+					applications: {
+						app: {},
+					},
+				},
+			}),
+		/App "app" must define development\.fallback in microfrontends config/,
+	);
 });
 
 function createFixtureWorkspace() {
@@ -532,6 +618,16 @@ function createFixtureWorkspace() {
 	writeJson(path.join(root, "apps/app/package.json"), { name: "app" });
 	writeJson(path.join(root, "apps/platform/package.json"), { name: "@repo/platform" });
 	writeJson(path.join(root, "apps/www/package.json"), { name: "www" });
+	writeJson(path.join(root, "related-projects.json"), {
+		portless: {
+			name: "mfe",
+			port: 1355,
+			https: false,
+		},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+		},
+	});
 	writeJson(path.join(root, "apps/app/microfrontends.json"), {
 		applications: {
 			app: {
@@ -584,12 +680,6 @@ function createLightfastFixtureWorkspace() {
 				"lightfast-www": {
 					portlessName: "docs.lightfast",
 				},
-			},
-		},
-		relatedProjects: {
-			platform: {
-				projectName: "lightfast-platform",
-				fallbackHost: "https://lightfast-platform.vercel.app",
 			},
 		},
 	});
