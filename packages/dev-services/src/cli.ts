@@ -2,7 +2,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { resolveWorktreeIdentity } from "@lightfastai/dev-core";
+import { resolveDevProjectConfig, resolveWorktreeIdentity } from "@lightfastai/dev-core";
 import {
 	buildInngestDevSyncTargets,
 	type DevPostgresConfig,
@@ -25,6 +25,7 @@ interface CliOptions {
 	appName?: string;
 	configPath?: string;
 	json?: boolean;
+	postgresTable?: string;
 	mfeApps: string[];
 	appUrls: Array<{ appName: string; url: string }>;
 	servePath?: string;
@@ -36,11 +37,59 @@ interface ParsedCommandArgs {
 	commandArgs: string[];
 }
 
+type CheckStatus = "pass" | "fail" | "skip";
+
+interface DevServiceCheck {
+	name: string;
+	status: CheckStatus;
+	message?: string;
+	remediation?: string;
+}
+
+interface ProjectReport {
+	name: string;
+	root: string;
+	configPath: string;
+}
+
+interface PostgresReport {
+	databaseName: string;
+	redactedDatabaseUrl: string;
+	host: string;
+	port: number;
+	containerName: string;
+	created?: boolean;
+	checks: DevServiceCheck[];
+}
+
+interface RedisReport {
+	restUrl: string;
+	redactedRestUrl: string;
+	keyPrefix: string;
+	redisContainerName: string;
+	httpContainerName: string;
+	checks: DevServiceCheck[];
+}
+
+interface DevServicesReport {
+	status: "ok" | "fail";
+	project: ProjectReport | null;
+	postgres: PostgresReport | null;
+	redis: RedisReport | null;
+	failures: string[];
+}
+
 const args = process.argv.slice(2);
 const command = args.shift();
 
 try {
 	switch (command) {
+		case "setup":
+			await handleSetup(args);
+			break;
+		case "doctor":
+			await handleDoctor(args);
+			break;
 		case "identity":
 			handleIdentity(args);
 			break;
@@ -140,6 +189,36 @@ async function handleInngestSync(args: string[]): Promise<void> {
 		}
 		process.exit(code ?? 0);
 	});
+}
+
+async function handleSetup(args: string[]): Promise<void> {
+	const { options } = parseOptions(args);
+	const report = await runSetup(options);
+
+	if (options.json) {
+		console.log(JSON.stringify(report));
+	} else {
+		printSetupReport(report);
+	}
+
+	if (report.status === "fail") {
+		process.exit(1);
+	}
+}
+
+async function handleDoctor(args: string[]): Promise<void> {
+	const { options } = parseOptions(args);
+	const report = await runDoctor(options);
+
+	if (options.json) {
+		console.log(JSON.stringify(report));
+	} else {
+		printDoctorReport(report);
+	}
+
+	if (report.status === "fail") {
+		process.exit(1);
+	}
 }
 
 function handlePostgresUrl(args: string[]): void {
@@ -266,6 +345,494 @@ async function handleRedisPing(args: string[]): Promise<void> {
 	console.log(pong);
 }
 
+async function runSetup(options: CliOptions): Promise<DevServicesReport> {
+	const report = createReport();
+
+	try {
+		const project = resolveProjectFromOptions(options);
+		const postgres = resolvePostgresConfigFromOptions(options);
+		const redis = resolveRedisConfigFromOptions(options);
+		report.project = formatProjectReport(project);
+		report.postgres = formatPostgresReport(postgres);
+		report.redis = formatRedisReport(redis);
+
+		await ensurePostgresContainer(postgres);
+		addCheck(report.postgres, {
+			name: "postgres-container",
+			status: "pass",
+			message: `${postgres.containerName} is running at ${postgres.host}:${postgres.port}`,
+		});
+
+		const created = await ensurePostgresDatabase(postgres);
+		report.postgres.created = created;
+		addCheck(report.postgres, {
+			name: "postgres-database",
+			status: "pass",
+			message: `${created ? "Created" : "Reused"} database ${postgres.databaseName}`,
+		});
+
+		await ensureRedisServices(redis);
+		addCheck(report.redis, {
+			name: "redis-services",
+			status: "pass",
+			message: `${redis.httpContainerName} is serving ${redis.restUrl}`,
+		});
+
+		const pong = await pingRedisRest(redis);
+		addCheck(report.redis, {
+			name: "redis-ping",
+			status: "pass",
+			message: pong,
+		});
+	} catch (error) {
+		recordFailure(report, error instanceof Error ? error.message : String(error));
+	}
+
+	finalizeReport(report);
+	return report;
+}
+
+async function runDoctor(options: CliOptions): Promise<DevServicesReport> {
+	const report = createReport();
+	const dockerAvailable = checkDockerAvailable(report);
+	let postgresConfig: DevPostgresConfig;
+	let redisConfig: DevRedisConfig;
+
+	try {
+		const project = resolveProjectFromOptions(options);
+		postgresConfig = resolvePostgresConfigFromOptions(options);
+		redisConfig = resolveRedisConfigFromOptions(options);
+		report.project = formatProjectReport(project);
+		report.postgres = formatPostgresReport(postgresConfig);
+		report.redis = formatRedisReport(redisConfig);
+	} catch (error) {
+		recordFailure(report, error instanceof Error ? error.message : String(error), "Run from a repo containing related-projects.json or pass --config <path>.");
+		finalizeReport(report);
+		return report;
+	}
+
+	if (report.postgres) {
+		checkPostgresDoctor(report, report.postgres, postgresConfig, dockerAvailable, options.postgresTable);
+	}
+
+	if (report.redis) {
+		await checkRedisDoctor(report, report.redis, redisConfig, dockerAvailable);
+	}
+
+	finalizeReport(report);
+	return report;
+}
+
+function createReport(): DevServicesReport {
+	return {
+		status: "ok",
+		project: null,
+		postgres: null,
+		redis: null,
+		failures: [],
+	};
+}
+
+function finalizeReport(report: DevServicesReport): void {
+	report.status = report.failures.length ? "fail" : "ok";
+}
+
+function formatProjectReport(project: ReturnType<typeof resolveDevProjectConfig>): ProjectReport {
+	return {
+		name: project.name,
+		root: project.root,
+		configPath: project.configPath,
+	};
+}
+
+function formatPostgresReport(config: DevPostgresConfig): PostgresReport {
+	return {
+		databaseName: config.databaseName,
+		redactedDatabaseUrl: redactPostgresUrl(config.databaseUrl),
+		host: config.host,
+		port: config.port,
+		containerName: config.containerName,
+		checks: [],
+	};
+}
+
+function formatRedisReport(config: DevRedisConfig): RedisReport {
+	return {
+		restUrl: config.restUrl,
+		redactedRestUrl: redactRedisRestUrl(config.restUrl),
+		keyPrefix: config.keyPrefix,
+		redisContainerName: config.redisContainerName,
+		httpContainerName: config.httpContainerName,
+		checks: [],
+	};
+}
+
+function addCheck(target: { checks: DevServiceCheck[] }, check: DevServiceCheck): void {
+	target.checks.push(check);
+}
+
+function recordFailure(report: DevServicesReport, message: string, remediation?: string): void {
+	const fullMessage = remediation ? `${message} ${remediation}` : message;
+	if (!report.failures.includes(fullMessage)) {
+		report.failures.push(fullMessage);
+	}
+}
+
+function addFailedCheck(
+	report: DevServicesReport,
+	target: { checks: DevServiceCheck[] },
+	check: Omit<DevServiceCheck, "status">,
+): void {
+	const failedCheck = { ...check, status: "fail" as const };
+	addCheck(target, failedCheck);
+	recordFailure(report, check.message ?? check.name, check.remediation);
+}
+
+function resolveProjectFromOptions(options: CliOptions) {
+	return resolveDevProjectConfig({
+		cwd: process.cwd(),
+		configPath: options.configPath,
+	});
+}
+
+function checkDockerAvailable(report: DevServicesReport): boolean {
+	const result = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	if (result.status === 0) {
+		return true;
+	}
+
+	recordFailure(
+		report,
+		`Docker is not available. ${formatSpawnFailure(result)}`,
+		"Start Docker, then run pnpm dev:setup.",
+	);
+	return false;
+}
+
+function checkPostgresDoctor(
+	report: DevServicesReport,
+	target: PostgresReport,
+	config: DevPostgresConfig,
+	dockerAvailable: boolean,
+	postgresTable?: string,
+): void {
+	if (!dockerAvailable) {
+		addFailedCheck(report, target, {
+			name: "postgres-container",
+			message: "Skipped Postgres checks because Docker is not available.",
+			remediation: "Start Docker, then run pnpm dev:setup.",
+		});
+		addSkippedPostgresChecks(target, postgresTable, "Docker is not available.");
+		return;
+	}
+
+	const state = inspectDockerContainer(config.containerName);
+	if (state !== "running") {
+		addFailedCheck(report, target, {
+			name: "postgres-container",
+			message: `${config.containerName} is ${state}.`,
+			remediation: "Run pnpm dev:setup.",
+		});
+		addSkippedPostgresChecks(target, postgresTable, "Postgres container is not running.");
+		return;
+	}
+
+	addCheck(target, {
+		name: "postgres-container",
+		status: "pass",
+		message: `${config.containerName} is running.`,
+	});
+
+	if (!checkPostgresReady(report, target, config)) {
+		addSkippedPostgresChecks(target, postgresTable, "Postgres is not accepting connections.");
+		return;
+	}
+
+	if (!checkPostgresDatabase(report, target, config)) {
+		if (postgresTable) {
+			addCheck(target, {
+				name: `postgres-table:${postgresTable}`,
+				status: "skip",
+				message: "Database does not exist.",
+			});
+		}
+		return;
+	}
+
+	if (postgresTable) {
+		checkPostgresTable(report, target, config, postgresTable);
+	}
+}
+
+function checkPostgresReady(
+	report: DevServicesReport,
+	target: PostgresReport,
+	config: DevPostgresConfig,
+): boolean {
+	const result = runDockerStatus([
+		"exec",
+		config.containerName,
+		"pg_isready",
+		"-U",
+		config.username,
+		"-d",
+		"postgres",
+	]);
+
+	if (result.status === 0) {
+		addCheck(target, {
+			name: "postgres-ready",
+			status: "pass",
+			message: "Postgres accepts connections.",
+		});
+		return true;
+	}
+
+	addFailedCheck(report, target, {
+		name: "postgres-ready",
+		message: `Postgres is not ready. ${formatSpawnFailure(result)}`,
+		remediation: "Run pnpm dev:setup.",
+	});
+	return false;
+}
+
+function checkPostgresDatabase(
+	report: DevServicesReport,
+	target: PostgresReport,
+	config: DevPostgresConfig,
+): boolean {
+	const result = runDockerStatus([
+		"exec",
+		config.containerName,
+		"psql",
+		"-U",
+		config.username,
+		"-d",
+		"postgres",
+		"-tAc",
+		`SELECT 1 FROM pg_database WHERE datname = '${config.databaseName.replace(/'/g, "''")}'`,
+	]);
+
+	if (result.status === 0 && spawnOutput(result.stdout).trim() === "1") {
+		addCheck(target, {
+			name: "postgres-database",
+			status: "pass",
+			message: `${config.databaseName} exists.`,
+		});
+		return true;
+	}
+
+	addFailedCheck(report, target, {
+		name: "postgres-database",
+		message: `${config.databaseName} does not exist.`,
+		remediation: "Run pnpm dev:setup.",
+	});
+	return false;
+}
+
+function checkPostgresTable(
+	report: DevServicesReport,
+	target: PostgresReport,
+	config: DevPostgresConfig,
+	postgresTable: string,
+): void {
+	if (!isSafeQualifiedIdentifier(postgresTable)) {
+		addFailedCheck(report, target, {
+			name: `postgres-table:${postgresTable}`,
+			message: `Invalid Postgres table name "${postgresTable}".`,
+		});
+		return;
+	}
+
+	const result = runDockerStatus([
+		"exec",
+		config.containerName,
+		"psql",
+		"-U",
+		config.username,
+		"-d",
+		config.databaseName,
+		"-tAc",
+		`SELECT to_regclass('${postgresTable.replace(/'/g, "''")}') IS NOT NULL`,
+	]);
+
+	if (result.status === 0 && spawnOutput(result.stdout).trim() === "t") {
+		addCheck(target, {
+			name: `postgres-table:${postgresTable}`,
+			status: "pass",
+			message: `${postgresTable} exists.`,
+		});
+		return;
+	}
+
+	addFailedCheck(report, target, {
+		name: `postgres-table:${postgresTable}`,
+		message: `${postgresTable} is missing.`,
+		remediation: "Run pnpm db:migrate.",
+	});
+}
+
+function addSkippedPostgresChecks(target: PostgresReport, postgresTable: string | undefined, message: string): void {
+	addCheck(target, {
+		name: "postgres-ready",
+		status: "skip",
+		message,
+	});
+	addCheck(target, {
+		name: "postgres-database",
+		status: "skip",
+		message,
+	});
+	if (postgresTable) {
+		addCheck(target, {
+			name: `postgres-table:${postgresTable}`,
+			status: "skip",
+			message,
+		});
+	}
+}
+
+async function checkRedisDoctor(
+	report: DevServicesReport,
+	target: RedisReport,
+	config: DevRedisConfig,
+	dockerAvailable: boolean,
+): Promise<void> {
+	if (config.source === "env") {
+		addCheck(target, {
+			name: "redis-services",
+			status: "skip",
+			message: "Redis uses env-backed REST config.",
+		});
+		await checkRedisPing(report, target, config);
+		return;
+	}
+
+	if (!dockerAvailable) {
+		addFailedCheck(report, target, {
+			name: "redis-services",
+			message: "Skipped Redis checks because Docker is not available.",
+			remediation: "Start Docker, then run pnpm dev:setup.",
+		});
+		addCheck(target, {
+			name: "redis-ping",
+			status: "skip",
+			message: "Docker is not available.",
+		});
+		return;
+	}
+
+	const redisState = inspectDockerContainer(config.redisContainerName);
+	const httpState = inspectDockerContainer(config.httpContainerName);
+	if (redisState !== "running" || httpState !== "running") {
+		addFailedCheck(report, target, {
+			name: "redis-services",
+			message: `${config.redisContainerName} is ${redisState}; ${config.httpContainerName} is ${httpState}.`,
+			remediation: "Run pnpm dev:setup.",
+		});
+		addCheck(target, {
+			name: "redis-ping",
+			status: "skip",
+			message: "Redis services are not running.",
+		});
+		return;
+	}
+
+	addCheck(target, {
+		name: "redis-services",
+		status: "pass",
+		message: `${config.redisContainerName} and ${config.httpContainerName} are running.`,
+	});
+	await checkRedisPing(report, target, config);
+}
+
+async function checkRedisPing(
+	report: DevServicesReport,
+	target: RedisReport,
+	config: DevRedisConfig,
+): Promise<void> {
+	try {
+		const pong = await pingRedisRest(config);
+		addCheck(target, {
+			name: "redis-ping",
+			status: "pass",
+			message: pong,
+		});
+	} catch (error) {
+		addFailedCheck(report, target, {
+			name: "redis-ping",
+			message: `Redis REST ping failed. ${error instanceof Error ? error.message : String(error)}`,
+			remediation: "Run pnpm dev:setup.",
+		});
+	}
+}
+
+function runDockerStatus(args: string[]): ReturnType<typeof spawnSync> {
+	return spawnSync("docker", args, {
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+}
+
+function formatSpawnFailure(result: ReturnType<typeof spawnSync>): string {
+	if (result.error) {
+		return result.error.message;
+	}
+	return (spawnOutput(result.stderr) || spawnOutput(result.stdout) || `exit ${result.status ?? "unknown"}`).trim();
+}
+
+function spawnOutput(value: string | NodeJS.ArrayBufferView | null | undefined): string {
+	return typeof value === "string" ? value : value?.toString() ?? "";
+}
+
+function isSafeQualifiedIdentifier(value: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(value);
+}
+
+function printSetupReport(report: DevServicesReport): void {
+	if (report.status === "ok") {
+		console.log("Dev services are ready.");
+		printResolvedServices(report);
+		return;
+	}
+
+	printFailures(report);
+}
+
+function printDoctorReport(report: DevServicesReport): void {
+	if (report.status === "ok") {
+		console.log("Dev services doctor passed.");
+		printResolvedServices(report);
+		return;
+	}
+
+	printFailures(report);
+}
+
+function printResolvedServices(report: DevServicesReport): void {
+	if (report.project) {
+		console.log(`Project: ${report.project.name} (${report.project.root})`);
+	}
+	if (report.postgres) {
+		console.log(`Postgres: ${report.postgres.databaseName} at ${report.postgres.host}:${report.postgres.port}`);
+	}
+	if (report.redis) {
+		console.log(`Redis REST: ${report.redis.restUrl}`);
+		console.log(`Redis key prefix: ${report.redis.keyPrefix}`);
+	}
+}
+
+function printFailures(report: DevServicesReport): void {
+	console.error("Dev services check failed.");
+	for (const failure of report.failures) {
+		console.error(`- ${failure}`);
+	}
+}
+
 async function resolveInngestTargets(options: CliOptions) {
 	const explicitTargets = buildInngestDevSyncTargets({
 		result: {
@@ -348,6 +915,9 @@ function parseOptions(args: string[]): { options: CliOptions } {
 				break;
 			case "--config":
 				options.configPath = readOptionValue(args, ++i, arg);
+				break;
+			case "--postgres-table":
+				options.postgresTable = readOptionValue(args, ++i, arg);
 				break;
 			case "--mfe-app":
 				options.mfeApps.push(readOptionValue(args, ++i, arg));
@@ -727,6 +1297,8 @@ function signalExitCode(signal: NodeJS.Signals): number {
 
 function printHelp(): void {
 	console.log(`Usage:
+  lightfast-dev-services setup [--json]
+  lightfast-dev-services doctor [--postgres-table <name>] [--json]
   lightfast-dev-services identity --app-name <name> [--json]
   lightfast-dev-services inngest-sync [--mfe-app <name>] [--app-url <name=url>] -- <command> [...args]
   lightfast-dev-services postgres-url [--json]
@@ -739,6 +1311,8 @@ function printHelp(): void {
 Options:
   --app-name <name>     Runtime base app name for identity
   --config <path>       Path to related-projects.json. Default: walk upward from cwd
+  --postgres-table <name>
+                        Doctor check for an expected Postgres table
   --mfe-app <name>      Resolve a Portless MFE app URL through @lightfastai/related-projects
   --app-url <name=url>  Explicit app URL to sync into the Inngest Dev Server
   --serve-path <path>   Inngest serve route path. Default: /api/inngest

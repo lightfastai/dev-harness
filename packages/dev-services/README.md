@@ -16,6 +16,24 @@ The CLI form is available when shell scripts need the same value:
 lightfast-dev-services identity --app-name lightfast-app --json
 ```
 
+## Worktree setup
+
+Use one command to provision the local services for a new worktree:
+
+```sh
+pnpm dev:setup
+```
+
+In this sandbox, `dev:setup` runs `lightfast-dev-services setup` and then delegates migrations to `@example/db-app`. The service CLI starts the shared Postgres container, creates the derived worktree database, starts Redis plus the Upstash-compatible HTTP proxy, and verifies Redis with `PING`.
+
+Check an existing worktree without creating anything:
+
+```sh
+pnpm dev:doctor
+```
+
+`dev:doctor` runs `lightfast-dev-services doctor --postgres-table example_probe_events`. It verifies `related-projects.json`, Docker, the derived Postgres database, the expected migrated table, Redis/SRH, and Redis REST ping. Use `--json` on either CLI command for machine-readable reports.
+
 ## Inngest
 
 Run one Inngest Dev Server per machine:
@@ -69,6 +87,8 @@ Run one Drizzle Studio process per machine, normally on Drizzle's default `127.0
 Run one Docker Postgres container per machine and give each worktree its own database:
 
 ```sh
+pnpm dev:setup
+pnpm dev:doctor
 pnpm db:up
 pnpm db:create
 pnpm db:url
@@ -89,6 +109,8 @@ Useful overrides:
 Run one Redis Stack container and one Upstash-compatible HTTP proxy per machine:
 
 ```sh
+pnpm dev:setup
+pnpm dev:doctor
 pnpm redis:up
 pnpm redis:ping
 pnpm redis:url

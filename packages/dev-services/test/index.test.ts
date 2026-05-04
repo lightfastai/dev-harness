@@ -345,6 +345,25 @@ test("CLI identity prints worktree-scoped JSON", () => {
 	);
 });
 
+test("CLI help lists setup and doctor commands", () => {
+	const result = spawnSync(
+		process.execPath,
+		[
+			path.resolve("dist/cli.js"),
+			"--help",
+		],
+		{
+			cwd: process.cwd(),
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
+
+	assert.equal(result.status, 0, result.stderr || result.stdout);
+	assert.match(result.stdout, /lightfast-dev-services setup \[--json\]/);
+	assert.match(result.stdout, /lightfast-dev-services doctor \[--postgres-table <name>\] \[--json\]/);
+});
+
 test("CLI postgres-url prints derived JSON config", () => {
 	const fixture = createProjectFixture("mfe");
 	const result = spawnSync(
@@ -438,6 +457,83 @@ test("CLI redis-url prints derived JSON config", () => {
 	assert.equal(config.redactedRestUrl, "http://127.0.0.1:8078");
 	assert.match(config.keyPrefix, /^mfe:main:[a-f0-9]{8}$/);
 	assert.equal(config.restPort, 8078);
+});
+
+test("CLI doctor JSON reports missing related-projects config", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-services-doctor-no-config-"));
+	const result = spawnSync(
+		process.execPath,
+		[
+			path.resolve("dist/cli.js"),
+			"doctor",
+			"--json",
+		],
+		{
+			cwd: root,
+			encoding: "utf8",
+			env: {
+				...process.env,
+				DATABASE_URL: "",
+				LIGHTFAST_DEV_DATABASE_NAME: "",
+				KV_REST_API_URL: "",
+				KV_REST_API_TOKEN: "",
+				LIGHTFAST_DEV_REDIS_KEY_PREFIX: "",
+				UPSTASH_REDIS_REST_URL: "",
+				UPSTASH_REDIS_REST_TOKEN: "",
+			},
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
+
+	assert.notEqual(result.status, 0);
+	const report = JSON.parse(result.stdout) as {
+		status: string;
+		project: unknown;
+		failures: string[];
+	};
+	assert.equal(report.status, "fail");
+	assert.equal(report.project, null);
+	assert.match(report.failures.join("\n"), /Could not find related-projects\.json/);
+});
+
+test("CLI doctor JSON includes requested Postgres table check", () => {
+	const fixture = createProjectFixture("mfe");
+	const result = spawnSync(
+		process.execPath,
+		[
+			path.resolve("dist/cli.js"),
+			"doctor",
+			"--postgres-table",
+			"example_probe_events",
+			"--json",
+		],
+		{
+			cwd: fixture.nested,
+			encoding: "utf8",
+			env: {
+				...process.env,
+				DATABASE_URL: "",
+				LIGHTFAST_DEV_DATABASE_NAME: "",
+				KV_REST_API_URL: "",
+				KV_REST_API_TOKEN: "",
+				LIGHTFAST_DEV_REDIS_KEY_PREFIX: "",
+				UPSTASH_REDIS_REST_URL: "",
+				UPSTASH_REDIS_REST_TOKEN: "",
+			},
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
+
+	assert.notEqual(result.status, 0);
+	const report = JSON.parse(result.stdout) as {
+		postgres: {
+			checks: Array<{ name: string; status: string }>;
+		};
+	};
+	assert.equal(
+		report.postgres.checks.some((check) => check.name === "postgres-table:example_probe_events"),
+		true,
+	);
 });
 
 function createProjectFixture(name: string): { root: string; nested: string } {
