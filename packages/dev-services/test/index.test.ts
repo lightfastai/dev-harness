@@ -364,6 +364,26 @@ test("CLI help lists setup and doctor commands", () => {
 	assert.match(result.stdout, /lightfast-dev-services doctor \[--postgres-table <name>\] \[--json\]/);
 });
 
+test("CLI inngest-sync help exits without spawning a command", () => {
+	const result = spawnSync(
+		process.execPath,
+		[
+			path.resolve("dist/cli.js"),
+			"inngest-sync",
+			"--help",
+		],
+		{
+			cwd: process.cwd(),
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
+
+	assert.equal(result.status, 0, result.stderr || result.stdout);
+	assert.match(result.stdout, /lightfast-dev-services inngest-sync/);
+	assert.equal(result.stderr, "");
+});
+
 test("CLI postgres-url prints derived JSON config", () => {
 	const fixture = createProjectFixture("mfe");
 	const result = spawnSync(

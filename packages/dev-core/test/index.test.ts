@@ -8,6 +8,7 @@ import {
 	branchToPrefix,
 	defaultDetectWorktreePrefix,
 	resolveDevProjectConfig,
+	resolveDevProjectIdentity,
 	resolveWorktreeIdentity,
 	resolveWorktreeRuntimeName,
 	sanitizeWorktreePrefix,
@@ -89,6 +90,34 @@ test("resolveDevProjectConfig reports missing or incomplete config", () => {
 	);
 });
 
+test("resolveDevProjectIdentity includes worktree prefix and stable root hash", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-core-project-identity-"));
+	const nested = path.join(root, "example", "apps", "app");
+	fs.mkdirSync(nested, { recursive: true });
+	fs.writeFileSync(
+		path.join(root, "related-projects.json"),
+		JSON.stringify({ portless: { name: "mfe" } }),
+	);
+
+	const identity = resolveDevProjectIdentity({
+		cwd: nested,
+		detectWorktreePrefix: () => "dev-services",
+	});
+
+	assert.equal(identity.name, "mfe");
+	assert.equal(identity.root, root);
+	assert.equal(identity.configPath, path.join(root, "related-projects.json"));
+	assert.equal(identity.worktreePrefix, "dev-services");
+	assert.match(identity.rootHash, /^[a-f0-9]{8}$/);
+	assert.equal(
+		resolveDevProjectIdentity({
+			cwd: root,
+			detectWorktreePrefix: () => "dev-services",
+		}).rootHash,
+		identity.rootHash,
+	);
+});
+
 test("package export map supports intended ESM imports", () => {
 	const result = spawnSync(
 		process.execPath,
@@ -98,6 +127,7 @@ test("package export map supports intended ESM imports", () => {
 			`
 				const api = await import("@lightfastai/dev-core");
 				if (typeof api.resolveDevProjectConfig !== "function") throw new Error("missing project config API");
+				if (typeof api.resolveDevProjectIdentity !== "function") throw new Error("missing project identity API");
 				if (typeof api.resolveWorktreeRuntimeName !== "function") throw new Error("missing identity API");
 				if (typeof api.defaultDetectWorktreePrefix !== "function") throw new Error("missing detection API");
 			`,

@@ -34,10 +34,16 @@ const identity = resolveWorktreeIdentity({ baseName: "lightfast-platform" });
 Resolve the shared local-dev project identity from `related-projects.json`:
 
 ```ts
-import { resolveDevProjectConfig } from "@lightfastai/dev-core";
+import {
+  resolveDevProjectConfig,
+  resolveDevProjectIdentity,
+} from "@lightfastai/dev-core";
 
 const project = resolveDevProjectConfig();
 // { root, configPath, name } where name is related-projects.json portless.name
+
+const identity = resolveDevProjectIdentity();
+// { root, configPath, name, worktreePrefix, rootHash }
 ```
 
 ## API
@@ -47,6 +53,7 @@ import {
   branchToPrefix,
   defaultDetectWorktreePrefix,
   resolveDevProjectConfig,
+  resolveDevProjectIdentity,
   resolveWorktreeIdentity,
   resolveWorktreeRuntimeName,
   sanitizeWorktreePrefix,
@@ -54,6 +61,8 @@ import {
 ```
 
 `defaultDetectWorktreePrefix` first asks `git worktree` for linked-worktree state, then falls back to reading a `.git` file that points into a `worktrees/` directory. Main, master, and detached HEAD states do not produce a prefix.
+
+`resolveDevProjectIdentity` is the shared identity primitive for service packages. It walks upward to `related-projects.json`, reads `portless.name`, detects the current worktree prefix, and returns an 8-character hash of the resolved config root.
 
 ## Publishing
 
