@@ -11,7 +11,7 @@ function emit(event, payload) {
 }
 
 async function resolveIdentity() {
-	const { resolvePortlessMfeRuntime } = await import("@lightfastai/related-projects");
+	const { resolvePortlessMfeRuntime } = await import("@lightfastai/dev-proxy");
 
 	return resolvePortlessMfeRuntime({
 		cwd: ROOT,

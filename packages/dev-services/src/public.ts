@@ -1,4 +1,13 @@
+export * from "./doctor.js";
 export * from "./inngest/sync.js";
+export type * from "./options.js";
 export * from "./postgres/config.js";
+export * from "./postgres/docker.js";
 export * from "./redis/config.js";
+export * from "./redis/docker.js";
+export * from "./redis/rest.js";
+export * from "./reports/format.js";
+export type * from "./reports/types.js";
+export * from "./resolve.js";
+export * from "./setup.js";
 export type * from "./types.js";

@@ -14,6 +14,7 @@ import {
 	resolveDevPostgresDatabaseName,
 	resolveDevRedisConfig,
 	resolveDevRedisKeyPrefix,
+	runDevServicesDoctor,
 	startInngestDevSync,
 	syncInngestDevTarget,
 } from "../src/public.js";
@@ -145,7 +146,7 @@ test("Inngest dev sync skips persistent missing routes after grace", async () =>
 	assert.deepEqual(logs, ["Inngest sync skipped missing: HTTP 404"]);
 });
 
-test("dev Postgres database names use related-projects project identity and root hash", () => {
+test("dev Postgres database names use Lightfast dev project identity and root hash", () => {
 	const fixture = createProjectFixture("mfe");
 	const databaseName = resolveDevPostgresDatabaseName({
 		cwd: fixture.nested,
@@ -199,11 +200,11 @@ test("dev Postgres config derives a local URL and honors DATABASE_URL", () => {
 	);
 });
 
-test("dev Postgres config requires related-projects.json for derived names", () => {
+test("dev Postgres config requires lightfast.dev.json for derived names", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-services-no-config-"));
 	assert.throws(
 		() => resolveDevPostgresConfig({ cwd: root, env: {} }),
-		/Could not find related-projects\.json/,
+		/Could not find lightfast\.dev\.json/,
 	);
 });
 
@@ -222,7 +223,7 @@ test("dev Postgres URL validation rejects remote and reserved databases", () => 
 	);
 });
 
-test("dev Redis key prefixes use related-projects project identity and root hash", () => {
+test("dev Redis key prefixes use Lightfast dev project identity and root hash", () => {
 	const fixture = createProjectFixture("mfe");
 	const keyPrefix = resolveDevRedisKeyPrefix({
 		cwd: fixture.nested,
@@ -297,11 +298,13 @@ test("package export map supports intended ESM imports", () => {
 			"--eval",
 			`
 				const api = await import("@lightfastai/dev-services");
-				if (typeof api.startInngestDevSync !== "function") throw new Error("missing Inngest sync API");
-				if (typeof api.resolveDevPostgresConfig !== "function") throw new Error("missing Postgres config API");
-				if (typeof api.resolveDevRedisConfig !== "function") throw new Error("missing Redis config API");
-				if ("resolveWorktreeRuntimeName" in api) throw new Error("worktree API should live in @lightfastai/dev-core");
-			`,
+					if (typeof api.startInngestDevSync !== "function") throw new Error("missing Inngest sync API");
+					if (typeof api.resolveDevPostgresConfig !== "function") throw new Error("missing Postgres config API");
+					if (typeof api.resolveDevRedisConfig !== "function") throw new Error("missing Redis config API");
+					if (typeof api.runDevServicesDoctor !== "function") throw new Error("missing doctor API");
+					if (typeof api.runDevServicesSetup !== "function") throw new Error("missing setup API");
+					if ("resolveWorktreeRuntimeName" in api) throw new Error("worktree API should live in @lightfastai/dev-core");
+				`,
 		],
 		{
 			cwd: process.cwd(),
@@ -313,245 +316,46 @@ test("package export map supports intended ESM imports", () => {
 	assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
-test("CLI identity prints worktree-scoped JSON", () => {
-	const result = spawnSync(
-		process.execPath,
-		[
-			"dist/cli.js",
-			"identity",
-			"--app-name",
-			"lightfast-app",
-			"--json",
-		],
-		{
-			cwd: process.cwd(),
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-
-	assert.equal(result.status, 0, result.stderr || result.stdout);
-	const identity = JSON.parse(result.stdout) as {
-		name: string;
-		baseName: string;
-		worktreePrefix?: string;
-	};
-	assert.equal(identity.baseName, "lightfast-app");
-	assert.equal(
-		identity.worktreePrefix
-			? identity.name.startsWith("lightfast-app-")
-			: identity.name,
-		identity.worktreePrefix ? true : "lightfast-app",
-	);
-});
-
-test("CLI help lists setup and doctor commands", () => {
-	const result = spawnSync(
-		process.execPath,
-		[
-			path.resolve("dist/cli.js"),
-			"--help",
-		],
-		{
-			cwd: process.cwd(),
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-
-	assert.equal(result.status, 0, result.stderr || result.stdout);
-	assert.match(result.stdout, /lightfast-dev-services setup \[--json\]/);
-	assert.match(result.stdout, /lightfast-dev-services doctor \[--postgres-table <name>\] \[--json\]/);
-});
-
-test("CLI inngest-sync help exits without spawning a command", () => {
-	const result = spawnSync(
-		process.execPath,
-		[
-			path.resolve("dist/cli.js"),
-			"inngest-sync",
-			"--help",
-		],
-		{
-			cwd: process.cwd(),
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-
-	assert.equal(result.status, 0, result.stderr || result.stdout);
-	assert.match(result.stdout, /lightfast-dev-services inngest-sync/);
-	assert.equal(result.stderr, "");
-});
-
-test("CLI postgres-url prints derived JSON config", () => {
-	const fixture = createProjectFixture("mfe");
-	const result = spawnSync(
-		process.execPath,
-		[
-			path.resolve("dist/cli.js"),
-			"postgres-url",
-			"--json",
-		],
-		{
-			cwd: fixture.nested,
-			encoding: "utf8",
-			env: {
-				...process.env,
-				LIGHTFAST_DEV_DATABASE_NAME: "",
-				LIGHTFAST_DEV_POSTGRES_PORT: "5544",
-				DATABASE_URL: "",
-			},
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-
-	assert.equal(result.status, 0, result.stderr || result.stdout);
-	const config = JSON.parse(result.stdout) as {
-		databaseName: string;
-		databaseUrl: string;
-		redactedDatabaseUrl: string;
-		port: number;
-	};
-	assert.match(config.databaseName, /^mfe_main_[a-f0-9]{8}$/);
-	assert.equal(config.port, 5544);
-	assert.equal(config.databaseUrl, `postgresql://postgres:postgres@127.0.0.1:5544/${config.databaseName}`);
-	assert.equal(config.redactedDatabaseUrl, `postgresql://postgres:****@127.0.0.1:5544/${config.databaseName}`);
-});
-
-test("CLI rejects removed base-name option", () => {
-	const fixture = createProjectFixture("mfe");
-	const result = spawnSync(
-		process.execPath,
-		[
-			path.resolve("dist/cli.js"),
-			"postgres-url",
-			"--base-name",
-			"mfe",
-			"--json",
-		],
-		{
-			cwd: fixture.root,
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-
-	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /Unknown option "--base-name"/);
-});
-
-test("CLI redis-url prints derived JSON config", () => {
-	const fixture = createProjectFixture("mfe");
-	const result = spawnSync(
-		process.execPath,
-		[
-			path.resolve("dist/cli.js"),
-			"redis-url",
-			"--json",
-		],
-		{
-			cwd: fixture.nested,
-			encoding: "utf8",
-			env: {
-				...process.env,
-				LIGHTFAST_DEV_REDIS_KEY_PREFIX: "",
-				LIGHTFAST_DEV_REDIS_REST_PORT: "8078",
-				KV_REST_API_URL: "",
-				KV_REST_API_TOKEN: "",
-				UPSTASH_REDIS_REST_URL: "",
-				UPSTASH_REDIS_REST_TOKEN: "",
-			},
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
-
-	assert.equal(result.status, 0, result.stderr || result.stdout);
-	const config = JSON.parse(result.stdout) as {
-		restUrl: string;
-		redactedRestUrl: string;
-		keyPrefix: string;
-		restPort: number;
-	};
-	assert.equal(config.restUrl, "http://127.0.0.1:8078");
-	assert.equal(config.redactedRestUrl, "http://127.0.0.1:8078");
-	assert.match(config.keyPrefix, /^mfe:main:[a-f0-9]{8}$/);
-	assert.equal(config.restPort, 8078);
-});
-
-test("CLI doctor JSON reports missing related-projects config", () => {
+test("runDevServicesDoctor reports missing lightfast dev config", async () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-services-doctor-no-config-"));
-	const result = spawnSync(
-		process.execPath,
-		[
-			path.resolve("dist/cli.js"),
-			"doctor",
-			"--json",
-		],
-		{
-			cwd: root,
-			encoding: "utf8",
-			env: {
-				...process.env,
-				DATABASE_URL: "",
-				LIGHTFAST_DEV_DATABASE_NAME: "",
-				KV_REST_API_URL: "",
-				KV_REST_API_TOKEN: "",
-				LIGHTFAST_DEV_REDIS_KEY_PREFIX: "",
-				UPSTASH_REDIS_REST_URL: "",
-				UPSTASH_REDIS_REST_TOKEN: "",
-			},
-			stdio: ["ignore", "pipe", "pipe"],
+	const report = await runDevServicesDoctor({
+		cwd: root,
+		env: {
+			...process.env,
+			DATABASE_URL: "",
+			LIGHTFAST_DEV_DATABASE_NAME: "",
+			KV_REST_API_URL: "",
+			KV_REST_API_TOKEN: "",
+			LIGHTFAST_DEV_REDIS_KEY_PREFIX: "",
+			UPSTASH_REDIS_REST_URL: "",
+			UPSTASH_REDIS_REST_TOKEN: "",
 		},
-	);
+	});
 
-	assert.notEqual(result.status, 0);
-	const report = JSON.parse(result.stdout) as {
-		status: string;
-		project: unknown;
-		failures: string[];
-	};
 	assert.equal(report.status, "fail");
 	assert.equal(report.project, null);
-	assert.match(report.failures.join("\n"), /Could not find related-projects\.json/);
+	assert.match(report.failures.join("\n"), /Could not find lightfast\.dev\.json/);
 });
 
-test("CLI doctor JSON includes requested Postgres table check", () => {
+test("runDevServicesDoctor includes requested Postgres table check", async () => {
 	const fixture = createProjectFixture("mfe");
-	const result = spawnSync(
-		process.execPath,
-		[
-			path.resolve("dist/cli.js"),
-			"doctor",
-			"--postgres-table",
-			"example_probe_events",
-			"--json",
-		],
-		{
-			cwd: fixture.nested,
-			encoding: "utf8",
-			env: {
-				...process.env,
-				DATABASE_URL: "",
-				LIGHTFAST_DEV_DATABASE_NAME: "",
-				KV_REST_API_URL: "",
-				KV_REST_API_TOKEN: "",
-				LIGHTFAST_DEV_REDIS_KEY_PREFIX: "",
-				UPSTASH_REDIS_REST_URL: "",
-				UPSTASH_REDIS_REST_TOKEN: "",
-			},
-			stdio: ["ignore", "pipe", "pipe"],
+	const report = await runDevServicesDoctor({
+		cwd: fixture.nested,
+		postgresTable: "example_probe_events",
+		env: {
+			...process.env,
+			DATABASE_URL: "",
+			LIGHTFAST_DEV_DATABASE_NAME: "",
+			KV_REST_API_URL: "",
+			KV_REST_API_TOKEN: "",
+			LIGHTFAST_DEV_REDIS_KEY_PREFIX: "",
+			UPSTASH_REDIS_REST_URL: "",
+			UPSTASH_REDIS_REST_TOKEN: "",
 		},
-	);
+	});
 
-	assert.notEqual(result.status, 0);
-	const report = JSON.parse(result.stdout) as {
-		postgres: {
-			checks: Array<{ name: string; status: string }>;
-		};
-	};
 	assert.equal(
-		report.postgres.checks.some((check) => check.name === "postgres-table:example_probe_events"),
+		report.postgres?.checks.some((check) => check.name === "postgres-table:example_probe_events"),
 		true,
 	);
 });
@@ -561,7 +365,7 @@ function createProjectFixture(name: string): { root: string; nested: string } {
 	const nested = path.join(root, "example", "apps", "app");
 	fs.mkdirSync(nested, { recursive: true });
 	fs.writeFileSync(
-		path.join(root, "related-projects.json"),
+		path.join(root, "lightfast.dev.json"),
 		JSON.stringify({ portless: { name } }),
 	);
 	return { root, nested };

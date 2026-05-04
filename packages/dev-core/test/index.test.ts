@@ -59,18 +59,18 @@ test("defaultDetectWorktreePrefix falls back to git worktree file detection", ()
 	assert.equal(defaultDetectWorktreePrefix(nested), "worktree-core");
 });
 
-test("resolveDevProjectConfig reads related-projects.json from nested cwd", () => {
+test("resolveDevProjectConfig reads lightfast.dev.json from nested cwd", () => {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-core-project-"));
 	const nested = path.join(root, "example", "apps", "app");
 	fs.mkdirSync(nested, { recursive: true });
 	fs.writeFileSync(
-		path.join(root, "related-projects.json"),
+		path.join(root, "lightfast.dev.json"),
 		JSON.stringify({ portless: { name: "mfe" } }),
 	);
 
 	assert.deepEqual(resolveDevProjectConfig({ cwd: nested }), {
 		root,
-		configPath: path.join(root, "related-projects.json"),
+		configPath: path.join(root, "lightfast.dev.json"),
 		name: "mfe",
 	});
 });
@@ -79,11 +79,11 @@ test("resolveDevProjectConfig reports missing or incomplete config", () => {
 	const missingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dev-core-no-project-"));
 	assert.throws(
 		() => resolveDevProjectConfig({ cwd: missingRoot }),
-		/Could not find related-projects\.json/,
+		/Could not find lightfast\.dev\.json/,
 	);
 
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-core-bad-project-"));
-	fs.writeFileSync(path.join(root, "related-projects.json"), "{}");
+	fs.writeFileSync(path.join(root, "lightfast.dev.json"), "{}");
 	assert.throws(
 		() => resolveDevProjectConfig({ cwd: root }),
 		/must include portless\.name/,
@@ -95,7 +95,7 @@ test("resolveDevProjectIdentity includes worktree prefix and stable root hash", 
 	const nested = path.join(root, "example", "apps", "app");
 	fs.mkdirSync(nested, { recursive: true });
 	fs.writeFileSync(
-		path.join(root, "related-projects.json"),
+		path.join(root, "lightfast.dev.json"),
 		JSON.stringify({ portless: { name: "mfe" } }),
 	);
 
@@ -106,7 +106,7 @@ test("resolveDevProjectIdentity includes worktree prefix and stable root hash", 
 
 	assert.equal(identity.name, "mfe");
 	assert.equal(identity.root, root);
-	assert.equal(identity.configPath, path.join(root, "related-projects.json"));
+	assert.equal(identity.configPath, path.join(root, "lightfast.dev.json"));
 	assert.equal(identity.worktreePrefix, "dev-services");
 	assert.match(identity.rootHash, /^[a-f0-9]{8}$/);
 	assert.equal(

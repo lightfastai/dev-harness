@@ -7,7 +7,7 @@
     "typecheck": "echo \"(no typecheck for desktop)\""
   },
   "dependencies": {
-    "@lightfastai/related-projects": "workspace:*",
+    "@lightfastai/dev-proxy": "workspace:*",
     "electron": "catalog:"
   }
 }

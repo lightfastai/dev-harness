@@ -12,7 +12,7 @@ export interface ResolveDevProjectConfigOptions {
 	configPath?: string;
 }
 
-export const RELATED_PROJECTS_CONFIG_FILENAME = "related-projects.json";
+export const DEV_CONFIG_FILENAME = "lightfast.dev.json";
 
 export function resolveDevProjectConfig({
 	cwd = process.cwd(),
@@ -20,10 +20,10 @@ export function resolveDevProjectConfig({
 }: ResolveDevProjectConfigOptions = {}): DevProjectConfig {
 	const resolvedPath = configPath
 		? path.resolve(cwd, configPath)
-		: findRelatedProjectsConfig(cwd);
+		: findDevConfig(cwd);
 
 	if (!resolvedPath) {
-		throw new Error(`Could not find ${RELATED_PROJECTS_CONFIG_FILENAME} from ${cwd}.`);
+		throw new Error(`Could not find ${DEV_CONFIG_FILENAME} from ${cwd}.`);
 	}
 
 	const rawConfig = JSON.parse(fs.readFileSync(resolvedPath, "utf8")) as {
@@ -34,7 +34,7 @@ export function resolveDevProjectConfig({
 	const name = rawConfig.portless?.name;
 
 	if (typeof name !== "string" || !name.trim()) {
-		throw new Error(`${RELATED_PROJECTS_CONFIG_FILENAME} must include portless.name.`);
+		throw new Error(`${DEV_CONFIG_FILENAME} must include portless.name.`);
 	}
 
 	return {
@@ -44,11 +44,11 @@ export function resolveDevProjectConfig({
 	};
 }
 
-function findRelatedProjectsConfig(cwd: string): string | undefined {
+function findDevConfig(cwd: string): string | undefined {
 	let dir = path.resolve(cwd);
 
 	for (;;) {
-		const maybeConfig = path.join(dir, RELATED_PROJECTS_CONFIG_FILENAME);
+		const maybeConfig = path.join(dir, DEV_CONFIG_FILENAME);
 		if (fs.existsSync(maybeConfig)) {
 			return maybeConfig;
 		}

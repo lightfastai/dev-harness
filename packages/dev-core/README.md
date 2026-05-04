@@ -2,7 +2,7 @@
 
 Core local development primitives for Lightfast worktrees.
 
-This package owns worktree identity, prefix detection, and the small shared project identity read from `related-projects.json`. It does not know about Portless runtime behavior, Vercel Microfrontends, Inngest, or app-specific service wiring.
+This package owns worktree identity, prefix detection, and the small shared project identity read from `lightfast.dev.json`. It does not know about Portless runtime behavior, Vercel Microfrontends, Inngest, or app-specific service wiring.
 
 ## Usage
 
@@ -31,7 +31,7 @@ const identity = resolveWorktreeIdentity({ baseName: "lightfast-platform" });
 // { name, baseName, worktreePrefix }
 ```
 
-Resolve the shared local-dev project identity from `related-projects.json`:
+Resolve the shared local-dev project identity from `lightfast.dev.json`:
 
 ```ts
 import {
@@ -40,7 +40,7 @@ import {
 } from "@lightfastai/dev-core";
 
 const project = resolveDevProjectConfig();
-// { root, configPath, name } where name is related-projects.json portless.name
+// { root, configPath, name } where name is lightfast.dev.json portless.name
 
 const identity = resolveDevProjectIdentity();
 // { root, configPath, name, worktreePrefix, rootHash }
@@ -62,7 +62,7 @@ import {
 
 `defaultDetectWorktreePrefix` first asks `git worktree` for linked-worktree state, then falls back to reading a `.git` file that points into a `worktrees/` directory. Main, master, and detached HEAD states do not produce a prefix.
 
-`resolveDevProjectIdentity` is the shared identity primitive for service packages. It walks upward to `related-projects.json`, reads `portless.name`, detects the current worktree prefix, and returns an 8-character hash of the resolved config root.
+`resolveDevProjectIdentity` is the shared identity primitive for service packages. It walks upward to `lightfast.dev.json`, reads `portless.name`, detects the current worktree prefix, and returns an 8-character hash of the resolved config root.
 
 ## Publishing
 

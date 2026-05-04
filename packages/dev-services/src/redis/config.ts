@@ -36,7 +36,7 @@ export interface DevRedisConfig extends DevRedisServiceConfig {
 	source: "derived" | "env";
 }
 
-export const DEFAULT_DEV_REDIS_NETWORK = "lightfast-dev-services";
+export const DEFAULT_DEV_REDIS_NETWORK = "lightfast-dev";
 export const DEFAULT_DEV_REDIS_CONTAINER = "lightfast-redis";
 export const DEFAULT_DEV_REDIS_VOLUME = "lightfast-redis-data";
 export const DEFAULT_DEV_REDIS_IMAGE = "redis/redis-stack-server:6.2.6-v6";

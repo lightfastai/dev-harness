@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/@lightfastai/dev-proxy/schema/config.schema.json",
+  "portless": {
+    "name": "mfe",
+    "port": 1355,
+    "https": false
+  },
+  "microfrontends": {
+    "config": "microfrontends.json",
+    "apps": {}
+  }
+}

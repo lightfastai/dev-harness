@@ -1,23 +1,19 @@
 {
-  "name": "@lightfastai/dev-services",
-  "version": "0.1.5",
-  "description": "Local development service helpers for Lightfast worktrees.",
+  "name": "@lightfastai/dev-cli",
+  "version": "0.1.0",
+  "description": "Thin CLI harness for Lightfast local development APIs.",
   "license": "UNLICENSED",
   "type": "module",
   "main": "./dist/public.js",
   "types": "./dist/public.d.ts",
-  "sideEffects": false,
-  "keywords": [
-    "lightfast",
-    "development",
-    "worktrees",
-    "inngest",
-    "drizzle"
-  ],
   "files": [
+    "bin",
     "dist",
     "README.md"
   ],
+  "bin": {
+    "lightfast-dev": "bin/lightfast-dev.mjs"
+  },
   "exports": {
     ".": {
       "types": "./dist/public.d.ts",
@@ -32,7 +28,7 @@
   "scripts": {
     "clean": "rm -rf dist .turbo/test-dist *.tgz",
     "clean:dist": "rm -rf dist",
-    "build": "pnpm --filter @lightfastai/dev-core build && tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @lightfastai/dev-core build && pnpm --filter @lightfastai/dev-proxy build && pnpm --filter @lightfastai/dev-services build && tsc -p tsconfig.build.json",
     "prepack": "pnpm run clean:dist && pnpm run build",
     "pack:check": "pnpm run clean:dist && pnpm run build && node scripts/check-pack.mjs",
     "release:check": "pnpm run typecheck && pnpm run test && pnpm run pack:check",
@@ -40,13 +36,15 @@
     "publish:dry-run": "pnpm publish --dry-run --access public --no-git-checks",
     "publish:npm": "pnpm publish --access public --no-git-checks",
     "test": "pnpm run build && rm -rf .turbo/test-dist && tsc -p tsconfig.test.json && node --test .turbo/test-dist/test/*.test.js",
-    "typecheck": "pnpm --filter @lightfastai/dev-core build && tsc -p tsconfig.json --noEmit"
+    "typecheck": "pnpm --filter @lightfastai/dev-core build && pnpm --filter @lightfastai/dev-proxy build && pnpm --filter @lightfastai/dev-services build && tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@lightfastai/dev-core": "workspace:^0.1.1"
+    "@lightfastai/dev-core": "workspace:^0.1.1",
+    "@lightfastai/dev-proxy": "workspace:^0.1.18",
+    "@lightfastai/dev-services": "workspace:^0.1.5"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

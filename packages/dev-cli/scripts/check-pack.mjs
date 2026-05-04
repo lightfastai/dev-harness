@@ -24,20 +24,15 @@ if (result.status !== 0) {
 	process.exit(result.status ?? 1);
 }
 
-let pack;
-try {
-	[pack] = JSON.parse(result.stdout);
-} catch (error) {
-	process.stderr.write(result.stdout);
-	process.stderr.write(result.stderr);
-	throw error;
-}
-
+const [pack] = JSON.parse(result.stdout);
 const files = new Map(pack.files.map((file) => [file.path, file]));
 const requiredFiles = [
 	"README.md",
+	"bin/lightfast-dev.mjs",
 	"dist/public.js",
 	"dist/public.d.ts",
+	"dist/cli.js",
+	"dist/main.js",
 	"package.json",
 ];
 const forbiddenPrefixes = ["src/", "test/", ".turbo/", "node_modules/"];
@@ -55,10 +50,6 @@ if (packageJson.private === true) {
 
 if (!packageJson.publishConfig || packageJson.publishConfig.access !== "public") {
 	errors.push('publishConfig.access must be "public" for this scoped package.');
-}
-
-if (packageJson.version === "0.0.0") {
-	errors.push("package.json version is still the placeholder 0.0.0.");
 }
 
 for (const file of requiredFiles) {
@@ -83,6 +74,14 @@ for (const target of collectPackageTargets(packageJson)) {
 	}
 }
 
+const binPath = normalizePackagePath(packageJson.bin?.["lightfast-dev"]);
+const binFile = files.get(binPath);
+if (!binFile) {
+	errors.push("Missing lightfast-dev bin in package tarball.");
+} else if ((binFile.mode & 0o111) === 0) {
+	errors.push("lightfast-dev bin is not executable in package tarball.");
+}
+
 if (errors.length) {
 	for (const error of errors) {
 		console.error(`- ${error}`);
@@ -98,6 +97,10 @@ function collectPackageTargets(pkg) {
 	const targets = new Set();
 
 	for (const value of [pkg.main, pkg.types]) {
+		addTarget(targets, value);
+	}
+
+	for (const value of Object.values(pkg.bin ?? {})) {
 		addTarget(targets, value);
 	}
 

@@ -62,15 +62,18 @@ importers:
 
   .:
     devDependencies:
+      '@lightfastai/dev-cli':
+        specifier: workspace:*
+        version: link:packages/dev-cli
       '@lightfastai/dev-core':
         specifier: workspace:*
         version: link:packages/dev-core
+      '@lightfastai/dev-proxy':
+        specifier: workspace:*
+        version: link:packages/dev-proxy
       '@lightfastai/dev-services':
         specifier: workspace:*
         version: link:packages/dev-services
-      '@lightfastai/related-projects':
-        specifier: workspace:*
-        version: link:packages/related-projects
       portless:
         specifier: 'catalog:'
         version: 0.12.0
@@ -89,12 +92,15 @@ importers:
       '@example/vendor-upstash':
         specifier: workspace:*
         version: link:../../vendor/upstash
+      '@lightfastai/dev-cli':
+        specifier: workspace:*
+        version: link:../../../packages/dev-cli
       '@lightfastai/dev-core':
         specifier: workspace:*
         version: link:../../../packages/dev-core
-      '@lightfastai/related-projects':
+      '@lightfastai/dev-proxy':
         specifier: workspace:*
-        version: link:../../../packages/related-projects
+        version: link:../../../packages/dev-proxy
       '@vercel/microfrontends':
         specifier: 'catalog:'
         version: 2.3.2(next@15.5.15(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -129,9 +135,9 @@ importers:
 
   example/apps/desktop:
     dependencies:
-      '@lightfastai/related-projects':
+      '@lightfastai/dev-proxy':
         specifier: workspace:*
-        version: link:../../../packages/related-projects
+        version: link:../../../packages/dev-proxy
       electron:
         specifier: 'catalog:'
         version: 33.4.11
@@ -141,12 +147,15 @@ importers:
       '@example/db-app':
         specifier: workspace:*
         version: link:../../db/app
+      '@lightfastai/dev-cli':
+        specifier: workspace:*
+        version: link:../../../packages/dev-cli
       '@lightfastai/dev-core':
         specifier: workspace:*
         version: link:../../../packages/dev-core
-      '@lightfastai/related-projects':
+      '@lightfastai/dev-proxy':
         specifier: workspace:*
-        version: link:../../../packages/related-projects
+        version: link:../../../packages/dev-proxy
       '@vercel/microfrontends':
         specifier: 'catalog:'
         version: 2.3.2(next@15.5.15(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -230,7 +239,42 @@ importers:
         specifier: 'catalog:'
         version: 5.9.3
 
+  packages/dev-cli:
+    dependencies:
+      '@lightfastai/dev-core':
+        specifier: workspace:^0.1.1
+        version: link:../dev-core
+      '@lightfastai/dev-proxy':
+        specifier: workspace:^0.1.18
+        version: link:../dev-proxy
+      '@lightfastai/dev-services':
+        specifier: workspace:^0.1.5
+        version: link:../dev-services
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
   packages/dev-core:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
+  packages/dev-proxy:
+    dependencies:
+      '@lightfastai/dev-core':
+        specifier: workspace:^0.1.0
+        version: link:../dev-core
+      portless:
+        specifier: ^0.12.0
+        version: 0.12.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -244,22 +288,6 @@ importers:
       '@lightfastai/dev-core':
         specifier: workspace:^0.1.1
         version: link:../dev-core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.17
-      typescript:
-        specifier: ^5.0.0
-        version: 5.9.3
-
-  packages/related-projects:
-    dependencies:
-      '@lightfastai/dev-core':
-        specifier: workspace:^0.1.0
-        version: link:../dev-core
-      portless:
-        specifier: ^0.12.0
-        version: 0.12.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

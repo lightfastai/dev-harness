@@ -38,6 +38,12 @@ const requiredFiles = [
 	"README.md",
 	"dist/public.js",
 	"dist/public.d.ts",
+	"dist/next.js",
+	"dist/next.cjs",
+	"dist/next.d.ts",
+	"dist/related-projects.js",
+	"dist/related-projects.d.ts",
+	"schema/config.schema.json",
 	"package.json",
 ];
 const forbiddenPrefixes = ["src/", "test/", ".turbo/", "node_modules/"];
@@ -98,6 +104,10 @@ function collectPackageTargets(pkg) {
 	const targets = new Set();
 
 	for (const value of [pkg.main, pkg.types]) {
+		addTarget(targets, value);
+	}
+
+	for (const value of Object.values(pkg.bin ?? {})) {
 		addTarget(targets, value);
 	}
 

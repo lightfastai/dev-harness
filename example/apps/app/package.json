@@ -3,15 +3,16 @@
   "private": true,
   "portless": "app.mfe",
   "scripts": {
-    "dev": "portless run next dev",
-    "proxy": "portless-mfe proxy",
+    "dev": "lightfast-dev proxy app -- next dev",
+    "proxy": "lightfast-dev proxy start",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@example/db-app": "workspace:*",
     "@example/vendor-upstash": "workspace:*",
+    "@lightfastai/dev-cli": "workspace:*",
     "@lightfastai/dev-core": "workspace:*",
-    "@lightfastai/related-projects": "workspace:*",
+    "@lightfastai/dev-proxy": "workspace:*",
     "@vercel/microfrontends": "catalog:",
     "@vercel/related-projects": "catalog:",
     "inngest": "catalog:",
