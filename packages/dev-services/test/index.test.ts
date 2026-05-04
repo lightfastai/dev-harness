@@ -6,8 +6,11 @@ import {
 	buildInngestDevSyncTargets,
 	isInngestDevSyncEnabled,
 	redactPostgresUrl,
+	redactRedisRestUrl,
 	resolveDevPostgresConfig,
 	resolveDevPostgresDatabaseName,
+	resolveDevRedisConfig,
+	resolveDevRedisKeyPrefix,
 	startInngestDevSync,
 	syncInngestDevTarget,
 } from "../src/public.js";
@@ -202,6 +205,66 @@ test("dev Postgres URL validation rejects remote and reserved databases", () => 
 	);
 });
 
+test("dev Redis key prefixes include worktree identity and cwd hash", () => {
+	const keyPrefix = resolveDevRedisKeyPrefix({
+		baseName: "Lightfast",
+		cwd: "/tmp/example-worktree",
+		env: {},
+		detectWorktreePrefix: () => "feature/redis-worktrees",
+	});
+
+	assert.match(keyPrefix, /^lightfast:feature-redis-worktrees:[a-f0-9]{8}$/);
+	assert.equal(
+		resolveDevRedisKeyPrefix({
+			baseName: "Lightfast",
+			cwd: "/tmp/example-worktree",
+			env: { LIGHTFAST_DEV_REDIS_KEY_PREFIX: "custom:redis_prefix" },
+		}),
+		"custom:redis-prefix",
+	);
+});
+
+test("dev Redis config derives local REST config and honors env config", () => {
+	const derived = resolveDevRedisConfig({
+		baseName: "Lightfast",
+		cwd: "/tmp/example-worktree",
+		env: { LIGHTFAST_DEV_REDIS_REST_PORT: "8078" },
+		detectWorktreePrefix: () => undefined,
+	});
+
+	assert.equal(derived.source, "derived");
+	assert.equal(derived.restUrl, "http://127.0.0.1:8078");
+	assert.equal(derived.token, "lightfast-dev-redis-token");
+	assert.match(derived.keyPrefix, /^lightfast:main:[a-f0-9]{8}$/);
+
+	const fromEnv = resolveDevRedisConfig({
+		baseName: "Lightfast",
+		cwd: "/tmp/example-worktree",
+		env: {
+			KV_REST_API_URL: "https://example.upstash.io/",
+			KV_REST_API_TOKEN: "secret",
+		},
+	});
+
+	assert.equal(fromEnv.source, "env");
+	assert.equal(fromEnv.restUrl, "https://example.upstash.io");
+	assert.equal(fromEnv.token, "secret");
+	assert.equal(
+		redactRedisRestUrl("https://example.upstash.io/info?_token=secret"),
+		"https://example.upstash.io/info?_token=****",
+	);
+});
+
+test("dev Redis config requires URL and token together", () => {
+	assert.throws(
+		() => resolveDevRedisConfig({
+			baseName: "Lightfast",
+			env: { KV_REST_API_URL: "https://example.upstash.io" },
+		}),
+		/both URL and token/,
+	);
+});
+
 test("package export map supports intended ESM imports", () => {
 	const result = spawnSync(
 		process.execPath,
@@ -212,6 +275,7 @@ test("package export map supports intended ESM imports", () => {
 				const api = await import("@lightfastai/dev-services");
 				if (typeof api.startInngestDevSync !== "function") throw new Error("missing Inngest sync API");
 				if (typeof api.resolveDevPostgresConfig !== "function") throw new Error("missing Postgres config API");
+				if (typeof api.resolveDevRedisConfig !== "function") throw new Error("missing Redis config API");
 				if ("resolveWorktreeRuntimeName" in api) throw new Error("worktree API should live in @lightfastai/dev-core");
 			`,
 		],
@@ -291,6 +355,45 @@ test("CLI postgres-url prints derived JSON config", () => {
 	assert.equal(config.port, 5544);
 	assert.equal(config.databaseUrl, "postgresql://postgres:postgres@127.0.0.1:5544/mfe_sandbox_cli");
 	assert.equal(config.redactedDatabaseUrl, "postgresql://postgres:****@127.0.0.1:5544/mfe_sandbox_cli");
+});
+
+test("CLI redis-url prints derived JSON config", () => {
+	const result = spawnSync(
+		process.execPath,
+		[
+			"dist/cli.js",
+			"redis-url",
+			"--base-name",
+			"lightfast",
+			"--json",
+		],
+		{
+			cwd: process.cwd(),
+			encoding: "utf8",
+			env: {
+				...process.env,
+				LIGHTFAST_DEV_REDIS_KEY_PREFIX: "lightfast:cli",
+				LIGHTFAST_DEV_REDIS_REST_PORT: "8078",
+				KV_REST_API_URL: "",
+				KV_REST_API_TOKEN: "",
+				UPSTASH_REDIS_REST_URL: "",
+				UPSTASH_REDIS_REST_TOKEN: "",
+			},
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
+
+	assert.equal(result.status, 0, result.stderr || result.stdout);
+	const config = JSON.parse(result.stdout) as {
+		restUrl: string;
+		redactedRestUrl: string;
+		keyPrefix: string;
+		restPort: number;
+	};
+	assert.equal(config.restUrl, "http://127.0.0.1:8078");
+	assert.equal(config.redactedRestUrl, "http://127.0.0.1:8078");
+	assert.equal(config.keyPrefix, "lightfast:cli");
+	assert.equal(config.restPort, 8078);
 });
 
 async function waitFor(predicate: () => boolean): Promise<void> {

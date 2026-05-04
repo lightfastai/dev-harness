@@ -16,6 +16,15 @@ export interface ResolveDevPostgresDatabaseNameOptions {
 
 export type ResolveDevPostgresConfigOptions = ResolveDevPostgresDatabaseNameOptions;
 
+export interface ResolveDevRedisKeyPrefixOptions {
+	baseName: string;
+	cwd?: string;
+	env?: Env;
+	detectWorktreePrefix?: DetectWorktreePrefix;
+}
+
+export type ResolveDevRedisConfigOptions = ResolveDevRedisKeyPrefixOptions;
+
 export interface DevPostgresServiceConfig {
 	containerName: string;
 	volumeName: string;
@@ -37,6 +46,27 @@ export interface LocalDevPostgresUrl {
 	databaseName: string;
 }
 
+export interface DevRedisServiceConfig {
+	networkName: string;
+	redisContainerName: string;
+	redisVolumeName: string;
+	redisImage: string;
+	httpContainerName: string;
+	httpImage: string;
+	host: string;
+	redisPort: number;
+	restPort: number;
+	restToken: string;
+}
+
+export interface DevRedisConfig extends DevRedisServiceConfig {
+	redisUrl: string;
+	restUrl: string;
+	token: string;
+	keyPrefix: string;
+	source: "derived" | "env";
+}
+
 export const DEFAULT_DEV_POSTGRES_CONTAINER = "lightfast-postgres";
 export const DEFAULT_DEV_POSTGRES_VOLUME = "lightfast-postgres-data";
 export const DEFAULT_DEV_POSTGRES_IMAGE = "postgres:17-alpine";
@@ -44,6 +74,16 @@ export const DEFAULT_DEV_POSTGRES_HOST = "127.0.0.1";
 export const DEFAULT_DEV_POSTGRES_PORT = 5432;
 export const DEFAULT_DEV_POSTGRES_USERNAME = "postgres";
 export const DEFAULT_DEV_POSTGRES_PASSWORD = "postgres";
+export const DEFAULT_DEV_REDIS_NETWORK = "lightfast-dev-services";
+export const DEFAULT_DEV_REDIS_CONTAINER = "lightfast-redis";
+export const DEFAULT_DEV_REDIS_VOLUME = "lightfast-redis-data";
+export const DEFAULT_DEV_REDIS_IMAGE = "redis/redis-stack-server:6.2.6-v6";
+export const DEFAULT_DEV_REDIS_HTTP_CONTAINER = "lightfast-redis-http";
+export const DEFAULT_DEV_REDIS_HTTP_IMAGE = "hiett/serverless-redis-http:latest";
+export const DEFAULT_DEV_REDIS_HOST = "127.0.0.1";
+export const DEFAULT_DEV_REDIS_PORT = 6379;
+export const DEFAULT_DEV_REDIS_REST_PORT = 8079;
+export const DEFAULT_DEV_REDIS_REST_TOKEN = "lightfast-dev-redis-token";
 
 const POSTGRES_NAME_MAX_LENGTH = 63;
 const RESERVED_DATABASE_NAMES = new Set(["postgres", "template0", "template1"]);
@@ -185,7 +225,111 @@ export function redactPostgresUrl(value: string): string {
 		}
 		return url.toString();
 	} catch {
-	return "<invalid-postgres-url>";
+		return "<invalid-postgres-url>";
+	}
+}
+
+export function resolveDevRedisServiceConfig(env: Env = process.env): DevRedisServiceConfig {
+	return {
+		networkName: env.LIGHTFAST_DEV_REDIS_NETWORK || DEFAULT_DEV_REDIS_NETWORK,
+		redisContainerName: env.LIGHTFAST_DEV_REDIS_CONTAINER || DEFAULT_DEV_REDIS_CONTAINER,
+		redisVolumeName: env.LIGHTFAST_DEV_REDIS_VOLUME || DEFAULT_DEV_REDIS_VOLUME,
+		redisImage: env.LIGHTFAST_DEV_REDIS_IMAGE || DEFAULT_DEV_REDIS_IMAGE,
+		httpContainerName: env.LIGHTFAST_DEV_REDIS_HTTP_CONTAINER || DEFAULT_DEV_REDIS_HTTP_CONTAINER,
+		httpImage: env.LIGHTFAST_DEV_REDIS_HTTP_IMAGE || DEFAULT_DEV_REDIS_HTTP_IMAGE,
+		host: env.LIGHTFAST_DEV_REDIS_HOST || DEFAULT_DEV_REDIS_HOST,
+		redisPort: parsePort(env.LIGHTFAST_DEV_REDIS_PORT) ?? DEFAULT_DEV_REDIS_PORT,
+		restPort: parsePort(env.LIGHTFAST_DEV_REDIS_REST_PORT) ?? DEFAULT_DEV_REDIS_REST_PORT,
+		restToken: env.LIGHTFAST_DEV_REDIS_REST_TOKEN || DEFAULT_DEV_REDIS_REST_TOKEN,
+	};
+}
+
+export function resolveDevRedisKeyPrefix({
+	baseName,
+	cwd = process.cwd(),
+	env = process.env,
+	detectWorktreePrefix,
+}: ResolveDevRedisKeyPrefixOptions): string {
+	const explicitPrefix = env.LIGHTFAST_DEV_REDIS_KEY_PREFIX;
+	if (explicitPrefix) {
+		return assertSafeRedisKeyPrefix(sanitizeRedisKeyPrefix(explicitPrefix));
+	}
+
+	const identity = resolveWorktreeIdentity({
+		baseName,
+		cwd,
+		detectWorktreePrefix,
+	});
+	const basePart = sanitizeRedisKeyPrefixPart(identity.baseName);
+	const worktreePart = sanitizeRedisKeyPrefixPart(identity.worktreePrefix ?? "main");
+	const hash = createHash("sha1")
+		.update(path.resolve(cwd))
+		.digest("hex")
+		.slice(0, 8);
+
+	return assertSafeRedisKeyPrefix(`${basePart}:${worktreePart}:${hash}`);
+}
+
+export function resolveDevRedisConfig({
+	baseName,
+	cwd = process.cwd(),
+	env = process.env,
+	detectWorktreePrefix,
+}: ResolveDevRedisConfigOptions): DevRedisConfig {
+	const service = resolveDevRedisServiceConfig(env);
+	const envRestUrl = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
+	const envToken = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
+	const keyPrefix = resolveDevRedisKeyPrefix({
+		baseName,
+		cwd,
+		env,
+		detectWorktreePrefix,
+	});
+
+	if (envRestUrl || envToken) {
+		if (!(envRestUrl && envToken)) {
+			throw new Error("Redis REST config requires both URL and token.");
+		}
+
+		return {
+			...service,
+			redisUrl: `redis://${service.host}:${service.redisPort}`,
+			restUrl: normalizeUrl(envRestUrl),
+			token: envToken,
+			keyPrefix,
+			source: "env",
+		};
+	}
+
+	const restUrl = new URL("http://127.0.0.1");
+	restUrl.hostname = service.host;
+	restUrl.port = String(service.restPort);
+
+	return {
+		...service,
+		redisUrl: `redis://${service.host}:${service.redisPort}`,
+		restUrl: restUrl.toString().replace(/\/$/, ""),
+		token: service.restToken,
+		keyPrefix,
+		source: "derived",
+	};
+}
+
+export function redactRedisRestUrl(value: string): string {
+	try {
+		const url = new URL(value);
+		if (url.username) {
+			url.username = "****";
+		}
+		if (url.password) {
+			url.password = "****";
+		}
+		if (url.searchParams.has("_token")) {
+			url.searchParams.set("_token", "****");
+		}
+		return url.toString().replace(/\/$/, "");
+	} catch {
+		return "<invalid-redis-rest-url>";
 	}
 }
 
@@ -256,6 +400,15 @@ function normalizeLocalHostname(hostname: string): string {
 	return hostname === "::1" || hostname === "[::1]" ? "127.0.0.1" : hostname;
 }
 
+function normalizeUrl(value: string): string {
+	try {
+		const url = new URL(value);
+		return url.toString().replace(/\/$/, "");
+	} catch {
+		throw new Error("Redis REST URL must be a valid URL.");
+	}
+}
+
 function sanitizeDatabaseName(value: string): string {
 	return value
 		.toLowerCase()
@@ -280,6 +433,32 @@ function assertSafeDatabaseName(value: string): string {
 	}
 	if (value.length > POSTGRES_NAME_MAX_LENGTH) {
 		throw new Error(`Dev Postgres database name must be ${POSTGRES_NAME_MAX_LENGTH} characters or fewer.`);
+	}
+	return value;
+}
+
+function sanitizeRedisKeyPrefix(value: string): string {
+	return value
+		.split(":")
+		.map(sanitizeRedisKeyPrefixPart)
+		.filter(Boolean)
+		.join(":");
+}
+
+function sanitizeRedisKeyPrefixPart(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/[^a-z0-9-]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.replace(/-+/g, "-");
+}
+
+function assertSafeRedisKeyPrefix(value: string): string {
+	if (!value) {
+		throw new Error("Dev Redis key prefix cannot be empty.");
+	}
+	if (!/^[a-z0-9-]+(:[a-z0-9-]+)*$/.test(value)) {
+		throw new Error("Dev Redis key prefix must contain lowercase letters, numbers, hyphens, and colon separators.");
 	}
 	return value;
 }

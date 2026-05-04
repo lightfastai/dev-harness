@@ -6,7 +6,7 @@ This package owns reusable service helpers that are not specific to Portless or 
 
 - Inngest Dev Server serve-endpoint sync.
 - Wrapper CLI commands for local service coordination.
-- Consumer guidance for singleton local services such as Inngest and Drizzle Studio.
+- Consumer guidance for singleton local services such as Inngest, Redis, and Drizzle Studio.
 
 Worktree identity library APIs live in `@lightfastai/dev-core`, not this package.
 
@@ -83,6 +83,27 @@ Useful overrides:
 - `LIGHTFAST_DEV_POSTGRES_CONTAINER`
 - `LIGHTFAST_DEV_POSTGRES_VOLUME`
 - `LIGHTFAST_DEV_POSTGRES_IMAGE`
+
+## Redis
+
+Run one Redis Stack container and one Upstash-compatible HTTP proxy per machine:
+
+```sh
+pnpm redis:up
+pnpm redis:ping
+pnpm redis:url
+```
+
+The default service uses `redis/redis-stack-server:6.2.6-v6` in a `lightfast-redis` container and `hiett/serverless-redis-http:latest` in a `lightfast-redis-http` container. Worktrees share those containers and isolate data with a derived key prefix based on the base name, worktree identity, and cwd hash.
+
+Useful overrides:
+
+- `LIGHTFAST_DEV_REDIS_KEY_PREFIX`
+- `LIGHTFAST_DEV_REDIS_REST_PORT`
+- `LIGHTFAST_DEV_REDIS_REST_TOKEN`
+- `LIGHTFAST_DEV_REDIS_CONTAINER`
+- `LIGHTFAST_DEV_REDIS_HTTP_CONTAINER`
+- `LIGHTFAST_DEV_REDIS_NETWORK`
 
 ## Publishing
 

@@ -7,10 +7,15 @@ import {
 	buildInngestDevSyncTargets,
 	type DevPostgresConfig,
 	type DevPostgresServiceConfig,
+	type DevRedisConfig,
+	type DevRedisServiceConfig,
 	isInngestDevSyncEnabled,
 	redactPostgresUrl,
+	redactRedisRestUrl,
 	resolveDevPostgresConfig,
 	resolveDevPostgresServiceConfig,
+	resolveDevRedisConfig,
+	resolveDevRedisServiceConfig,
 	startInngestDevSync,
 } from "./public.js";
 
@@ -50,6 +55,15 @@ try {
 			break;
 		case "postgres-create":
 			await handlePostgresCreate(args);
+			break;
+		case "redis-url":
+			handleRedisUrl(args);
+			break;
+		case "redis-up":
+			await handleRedisUp(args);
+			break;
+		case "redis-ping":
+			await handleRedisPing(args);
 			break;
 		case "-h":
 		case "--help":
@@ -186,6 +200,70 @@ async function handlePostgresCreate(args: string[]): Promise<void> {
 	console.log(
 		`${created ? "Created" : "Reused"} dev Postgres database ${config.databaseName}`,
 	);
+}
+
+function handleRedisUrl(args: string[]): void {
+	const { options } = parseOptions(args);
+	const config = resolveRedisConfigFromOptions(options);
+
+	if (options.json) {
+		console.log(JSON.stringify({
+			restUrl: config.restUrl,
+			redactedRestUrl: redactRedisRestUrl(config.restUrl),
+			redisUrl: config.redisUrl,
+			keyPrefix: config.keyPrefix,
+			source: config.source,
+			host: config.host,
+			redisPort: config.redisPort,
+			restPort: config.restPort,
+			redisContainerName: config.redisContainerName,
+			httpContainerName: config.httpContainerName,
+		}));
+		return;
+	}
+
+	console.log(config.restUrl);
+}
+
+async function handleRedisUp(args: string[]): Promise<void> {
+	const { options } = parseOptions(args);
+	const config = resolveRedisConfigFromOptions(options);
+	await ensureRedisServices(config);
+
+	if (options.json) {
+		console.log(JSON.stringify({
+			restUrl: config.restUrl,
+			redactedRestUrl: redactRedisRestUrl(config.restUrl),
+			redisUrl: config.redisUrl,
+			keyPrefix: config.keyPrefix,
+			source: config.source,
+			networkName: config.networkName,
+			redisContainerName: config.redisContainerName,
+			httpContainerName: config.httpContainerName,
+		}));
+		return;
+	}
+
+	console.log(`Redis REST is running at ${config.restUrl} (${config.httpContainerName})`);
+}
+
+async function handleRedisPing(args: string[]): Promise<void> {
+	const { options } = parseOptions(args);
+	const config = resolveRedisConfigFromOptions(options);
+	await ensureRedisServices(config);
+	const pong = await pingRedisRest(config);
+
+	if (options.json) {
+		console.log(JSON.stringify({
+			restUrl: config.restUrl,
+			redactedRestUrl: redactRedisRestUrl(config.restUrl),
+			keyPrefix: config.keyPrefix,
+			pong,
+		}));
+		return;
+	}
+
+	console.log(pong);
 }
 
 async function resolveInngestTargets(options: CliOptions) {
@@ -335,6 +413,18 @@ function resolvePostgresConfigFromOptions(options: CliOptions): DevPostgresConfi
 	});
 }
 
+function resolveRedisConfigFromOptions(options: CliOptions): DevRedisConfig {
+	if (!options.baseName) {
+		throw new Error("Redis commands require --base-name <name>.");
+	}
+
+	return resolveDevRedisConfig({
+		baseName: options.baseName,
+		cwd: process.cwd(),
+		env: process.env,
+	});
+}
+
 async function ensurePostgresContainer(service: DevPostgresServiceConfig): Promise<void> {
 	const state = inspectDockerContainer(service.containerName);
 
@@ -471,6 +561,167 @@ function runDocker(args: string[], errorMessage: string): string {
 	return result.stdout;
 }
 
+async function ensureRedisServices(config: DevRedisConfig): Promise<void> {
+	if (config.source === "env") {
+		await waitForRedisRest(config);
+		return;
+	}
+
+	ensureDockerNetwork(config.networkName);
+	await ensureRedisContainer(config);
+	await ensureRedisHttpContainer(config);
+	await waitForRedisRest(config);
+}
+
+function ensureDockerNetwork(networkName: string): void {
+	const result = spawnSync(
+		"docker",
+		["network", "inspect", networkName],
+		{
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
+
+	if (result.error) {
+		throw result.error;
+	}
+	if (result.status === 0) {
+		return;
+	}
+
+	runDocker(
+		["network", "create", networkName],
+		`Unable to create Docker network ${networkName}.`,
+	);
+}
+
+async function ensureRedisContainer(service: DevRedisServiceConfig): Promise<void> {
+	const state = inspectDockerContainer(service.redisContainerName);
+
+	if (state === "running") {
+		await waitForRedisContainer(service);
+		return;
+	}
+
+	if (state === "stopped") {
+		runDocker(["start", service.redisContainerName], `Unable to start Docker container ${service.redisContainerName}.`);
+		await waitForRedisContainer(service);
+		return;
+	}
+
+	runDocker(
+		[
+			"run",
+			"--name",
+			service.redisContainerName,
+			"--network",
+			service.networkName,
+			"-p",
+			`${service.redisPort}:6379`,
+			"-v",
+			`${service.redisVolumeName}:/data`,
+			"-d",
+			service.redisImage,
+		],
+		`Unable to create Docker container ${service.redisContainerName}.`,
+	);
+	await waitForRedisContainer(service);
+}
+
+async function ensureRedisHttpContainer(config: DevRedisConfig): Promise<void> {
+	const state = inspectDockerContainer(config.httpContainerName);
+
+	if (state === "running") {
+		return;
+	}
+
+	if (state === "stopped") {
+		runDocker(["start", config.httpContainerName], `Unable to start Docker container ${config.httpContainerName}.`);
+		return;
+	}
+
+	runDocker(
+		[
+			"run",
+			"--name",
+			config.httpContainerName,
+			"--network",
+			config.networkName,
+			"-p",
+			`${config.restPort}:80`,
+			"-e",
+			"SRH_MODE=env",
+			"-e",
+			`SRH_TOKEN=${config.token}`,
+			"-e",
+			`SRH_CONNECTION_STRING=redis://${config.redisContainerName}:6379`,
+			"-d",
+			config.httpImage,
+		],
+		`Unable to create Docker container ${config.httpContainerName}.`,
+	);
+}
+
+async function waitForRedisContainer(service: DevRedisServiceConfig): Promise<void> {
+	let lastError = "";
+
+	for (let attempt = 0; attempt < 40; attempt++) {
+		const result = spawnSync(
+			"docker",
+			["exec", service.redisContainerName, "redis-cli", "ping"],
+			{
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+			},
+		);
+
+		if (result.status === 0 && result.stdout.trim() === "PONG") {
+			return;
+		}
+		lastError = result.stderr || result.stdout;
+		await new Promise((resolve) => setTimeout(resolve, 500));
+	}
+
+	throw new Error(`Timed out waiting for ${service.redisContainerName} to accept Redis connections. ${lastError.trim()}`);
+}
+
+async function waitForRedisRest(config: Pick<DevRedisConfig, "restUrl" | "token" | "httpContainerName">): Promise<void> {
+	let lastError = "";
+
+	for (let attempt = 0; attempt < 40; attempt++) {
+		try {
+			await pingRedisRest(config);
+			return;
+		} catch (error) {
+			lastError = error instanceof Error ? error.message : String(error);
+			await new Promise((resolve) => setTimeout(resolve, 500));
+		}
+	}
+
+	throw new Error(`Timed out waiting for ${config.httpContainerName} to accept Redis REST requests. ${lastError}`);
+}
+
+async function pingRedisRest(config: Pick<DevRedisConfig, "restUrl" | "token">): Promise<string> {
+	const response = await fetch(config.restUrl, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${config.token}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(["PING"]),
+	});
+	const body = await response.json() as { result?: unknown; error?: string };
+
+	if (!response.ok || body.error) {
+		throw new Error(body.error ?? `HTTP ${response.status}`);
+	}
+	if (body.result !== "PONG") {
+		throw new Error(`Unexpected Redis PING response: ${JSON.stringify(body.result)}`);
+	}
+	return body.result;
+}
+
 function signalExitCode(signal: NodeJS.Signals): number {
 	const codes: Partial<Record<NodeJS.Signals, number>> = {
 		SIGHUP: 1,
@@ -489,6 +740,9 @@ function printHelp(): void {
   lightfast-dev-services postgres-url --base-name <name> [--json]
   lightfast-dev-services postgres-up [--json]
   lightfast-dev-services postgres-create --base-name <name> [--json]
+  lightfast-dev-services redis-url --base-name <name> [--json]
+  lightfast-dev-services redis-up --base-name <name> [--json]
+  lightfast-dev-services redis-ping --base-name <name> [--json]
 
 Options:
   --app-name <name>     Runtime base app name for identity

@@ -29,6 +29,9 @@
     "db:url": "lightfast-dev-services postgres-url --base-name mfe_sandbox",
     "db:up": "lightfast-dev-services postgres-up",
     "db:create": "lightfast-dev-services postgres-create --base-name mfe_sandbox",
+    "redis:url": "lightfast-dev-services redis-url --base-name mfe_sandbox",
+    "redis:up": "lightfast-dev-services redis-up --base-name mfe_sandbox",
+    "redis:ping": "lightfast-dev-services redis-ping --base-name mfe_sandbox",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {

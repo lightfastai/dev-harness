@@ -11,6 +11,7 @@
     "@lightfastai/dev-core": "workspace:*",
     "@lightfastai/dev-services": "workspace:*",
     "@lightfastai/related-projects": "workspace:*",
+    "@upstash/redis": "^1.37.0",
     "@vercel/microfrontends": "2.3.2",
     "@vercel/related-projects": "1.1.0",
     "drizzle-orm": "^0.45.2",

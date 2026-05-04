@@ -1,6 +1,6 @@
 {
   "name": "@lightfastai/dev-services",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Local development service helpers for Lightfast worktrees.",
   "license": "UNLICENSED",
   "type": "module",

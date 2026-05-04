@@ -8,6 +8,9 @@ export default function SignInPage() {
 			<p>
 				<a href="/api/db">db probe</a>
 			</p>
+			<p>
+				<a href="/api/redis">redis probe</a>
+			</p>
 		</main>
 	);
 }
