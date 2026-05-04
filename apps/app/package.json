@@ -8,10 +8,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@lightfastai/dev-core": "workspace:*",
+    "@lightfastai/dev-services": "workspace:*",
     "@lightfastai/related-projects": "workspace:*",
     "@vercel/microfrontends": "2.3.2",
     "@vercel/related-projects": "1.1.0",
+    "drizzle-orm": "^0.45.2",
+    "inngest": "4.2.6",
     "next": "^15.0.0",
+    "postgres": "^3.4.9",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

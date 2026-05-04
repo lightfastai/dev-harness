@@ -5,10 +5,13 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { buildBridgeRequestHeaders } from "../src/bridge-headers.js";
+import {
+	BRIDGE_EXTERNAL_ORIGIN_HEADER,
+	buildBridgeExternalOrigin,
+	buildBridgeRequestHeaders,
+} from "../src/bridge-headers.js";
 import {
 	addTurboDevEnvMode,
-	branchToPrefix,
 	choosePort,
 	createVercelMicrofrontendsDevEnv,
 	createVercelMicrofrontendsDevConfig,
@@ -75,8 +78,6 @@ test("resolveTargetUrl derives worktree host without shelling out", () => {
 	});
 
 	assert.equal(targetUrl, "http://fix-ui.mfe.localhost:1355/sign-in");
-	assert.equal(branchToPrefix("feature/platform-shell"), "platform-shell");
-	assert.equal(branchToPrefix("main"), undefined);
 });
 
 test("resolveTargetUrl does not read a target path from package config", () => {
@@ -283,27 +284,115 @@ test("bridge request headers rewrite host and strip stale proxy forwarding heade
 			"x-forwarded-host": "localhost",
 			"x-forwarded-port": "443",
 			"x-forwarded-proto": "https",
+			[BRIDGE_EXTERNAL_ORIGIN_HEADER]: "http://stale.localhost:1355",
 			"x-portless": "1",
 			"x-portless-hops": "2",
 			connection: "keep-alive",
 		},
 		new URL("http://app.lightfast.localhost:1355/sign-in"),
 		{
-			forwardedHost: "lightfast.localhost:1355",
+			forwardedHost: "app.lightfast.localhost:1355",
 			forwardedProto: "http",
 			forwardedPort: 1355,
+			externalOrigin: "http://lightfast.localhost:1355",
 		},
 	);
 
 	assert.equal(headers.host, "app.lightfast.localhost:1355");
 	assert.equal(headers.origin, "http://lightfast.localhost:1355");
 	assert.equal(headers["x-forwarded-for"], "127.0.0.1");
-	assert.equal(headers["x-forwarded-host"], "lightfast.localhost:1355");
+	assert.equal(headers["x-forwarded-host"], "app.lightfast.localhost:1355");
 	assert.equal(headers["x-forwarded-port"], "1355");
 	assert.equal(headers["x-forwarded-proto"], "http");
+	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "http://lightfast.localhost:1355");
 	assert.equal(headers["x-portless"], undefined);
 	assert.equal(headers["x-portless-hops"], undefined);
 	assert.equal(headers.connection, undefined);
+});
+
+test("bridge request headers preserve worktree aggregate origin separately from app origin", () => {
+	const target = new URL("https://fix-ui.app.lightfast.localhost/sign-in");
+	const externalOrigin = buildBridgeExternalOrigin(
+		"fix-ui.lightfast.localhost",
+		target,
+	);
+	const headers = buildBridgeRequestHeaders(
+		{ host: "127.0.0.1:6924" },
+		target,
+		{
+			forwardedHost: target.host,
+			forwardedProto: target.protocol.replace(":", ""),
+			forwardedPort: target.port || "443",
+			externalOrigin,
+		},
+	);
+
+	assert.equal(externalOrigin, "https://fix-ui.lightfast.localhost");
+	assert.equal(headers.host, "fix-ui.app.lightfast.localhost");
+	assert.equal(headers["x-forwarded-host"], "fix-ui.app.lightfast.localhost");
+	assert.equal(headers["x-forwarded-port"], "443");
+	assert.equal(headers["x-forwarded-proto"], "https");
+	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "https://fix-ui.lightfast.localhost");
+	assert.equal(
+		buildBridgeExternalOrigin(
+			"fix-ui.mfe.localhost",
+			new URL("http://fix-ui.app.mfe.localhost:1355/sign-in"),
+		),
+		"http://fix-ui.mfe.localhost:1355",
+	);
+});
+
+test("bridge external origin prefers upstream forwarded browser origin", () => {
+	const target = new URL("http://app.lightfast.localhost:1355/account/welcome");
+
+	assert.equal(
+		buildBridgeExternalOrigin({
+			sourceHeaders: {
+				"x-forwarded-host": "lightfast.localhost",
+				"x-forwarded-proto": "https",
+				"x-forwarded-port": "443",
+			},
+			externalHost: "lightfast.localhost",
+			target,
+		}),
+		"https://lightfast.localhost",
+	);
+	assert.equal(
+		buildBridgeExternalOrigin({
+			sourceHeaders: {
+				"x-forwarded-host": "lightfast.localhost:1355",
+				"x-forwarded-proto": "http",
+				"x-forwarded-port": "1355",
+			},
+			externalHost: "lightfast.localhost",
+			target,
+		}),
+		"http://lightfast.localhost:1355",
+	);
+	assert.equal(
+		buildBridgeExternalOrigin({
+			sourceHeaders: {
+				"x-forwarded-host": "fix-ui.lightfast.localhost",
+				"x-forwarded-proto": "https",
+				"x-forwarded-port": "443",
+			},
+			externalHost: "fix-ui.lightfast.localhost",
+			target: new URL("http://fix-ui.app.lightfast.localhost:1355/account/welcome"),
+		}),
+		"https://fix-ui.lightfast.localhost",
+	);
+	assert.equal(
+		buildBridgeExternalOrigin({
+			sourceHeaders: {
+				"x-forwarded-host": "localhost",
+				"x-forwarded-proto": "http",
+				"x-forwarded-port": "443",
+			},
+			externalHost: "fix-ui.lightfast.localhost",
+			target: new URL("http://fix-ui.app.lightfast.localhost:1355/account/welcome"),
+		}),
+		"https://fix-ui.lightfast.localhost",
+	);
 });
 
 test("package export map supports intended ESM imports", () => {
@@ -795,9 +884,9 @@ function writeJson(filePath: string, value: unknown) {
 	fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function runNode(args: string[]) {
+function runNode(args: string[], options: { cwd?: string } = {}) {
 	return spawnSync(process.execPath, args, {
-		cwd: process.cwd(),
+		cwd: options.cwd ?? process.cwd(),
 		encoding: "utf8",
 	});
 }

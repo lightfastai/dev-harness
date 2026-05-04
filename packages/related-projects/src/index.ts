@@ -3,9 +3,12 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import type { SpawnSyncReturns, StdioOptions } from "node:child_process";
+import { defaultDetectWorktreePrefix, sanitizeWorktreePrefix } from "@lightfastai/dev-core";
+import type { DetectWorktreePrefix } from "@lightfastai/dev-core";
+import type { StdioOptions } from "node:child_process";
 
 export type Env = Record<string, string | undefined>;
+export type { DetectWorktreePrefix } from "@lightfastai/dev-core";
 
 export interface PortRange {
 	min?: number | string;
@@ -82,7 +85,6 @@ export type GetPortlessUrl = (
 	name: string,
 	options?: { cwd?: string; env?: Env; runner?: typeof spawnSync },
 ) => string | undefined;
-export type DetectWorktreePrefix = (cwd?: string) => string | undefined;
 
 export interface LoadPortlessMfeConfigOptions {
 	cwd?: string;
@@ -394,7 +396,7 @@ export function resolveRuntimeIdentity({
 		const host = new URL(targetUrl).hostname;
 		if (host !== baseHost && host.endsWith(`.${baseHost}`)) {
 			const prefix = host.slice(0, -`.${baseHost}`.length);
-			worktreePrefix = sanitizeHostnameLabels(prefix);
+			worktreePrefix = sanitizeWorktreePrefix(prefix);
 		}
 	} catch {
 		// Non-URL targets use the base runtime name.
@@ -1040,25 +1042,6 @@ export async function choosePort(
 	throw new Error(`No available port found in range ${min}-${max} for ${seed}`);
 }
 
-export function defaultDetectWorktreePrefix(cwd = process.cwd()): string | undefined {
-	const cliPrefix = detectWorktreeViaGitCli(cwd);
-	if (cliPrefix !== undefined) {
-		return cliPrefix;
-	}
-
-	return detectWorktreeViaFilesystem(cwd);
-}
-
-export function branchToPrefix(branch?: string): string | undefined {
-	if (!branch || branch === "HEAD" || branch === "main" || branch === "master") {
-		return undefined;
-	}
-
-	const lastSegment = branch.split("/").pop() ?? "";
-	const prefix = sanitizeHostnameLabels(lastSegment);
-	return prefix || undefined;
-}
-
 export function withTargetPath(baseUrl: string, targetPath: string = "/"): string {
 	if (targetPath === "" || targetPath === undefined || targetPath === null) {
 		return new URL(baseUrl).toString();
@@ -1386,96 +1369,6 @@ function expandWorkspacePattern(root: string, pattern: string): string[] {
 		.readdirSync(base, { withFileTypes: true })
 		.filter((entry) => entry.isDirectory())
 		.map((entry) => path.join(base, entry.name));
-}
-
-function detectWorktreeViaGitCli(cwd: string): string | undefined {
-	const list = spawnSync("git", ["worktree", "list", "--porcelain"], {
-		cwd,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-	});
-
-	if (list.status !== 0) {
-		return undefined;
-	}
-
-	const worktreeCount = list.stdout
-		.split("\n")
-		.filter((line) => line.startsWith("worktree ")).length;
-	if (worktreeCount <= 1) {
-		return undefined;
-	}
-
-	const gitDir = spawnSync("git", ["rev-parse", "--git-dir"], {
-		cwd,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-	});
-	const commonDir = spawnSync("git", ["rev-parse", "--git-common-dir"], {
-		cwd,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-	});
-	const branch = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-		cwd,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-	});
-
-	if (
-		gitDir.status !== 0 ||
-		commonDir.status !== 0 ||
-		branch.status !== 0 ||
-		path.resolve(cwd, gitDir.stdout.trim()) === path.resolve(cwd, commonDir.stdout.trim())
-	) {
-		return undefined;
-	}
-
-	return branchToPrefix(branch.stdout.trim());
-}
-
-function detectWorktreeViaFilesystem(startDir: string): string | undefined {
-	let dir = startDir;
-
-	for (;;) {
-		const gitPath = path.join(dir, ".git");
-		try {
-			const stat = fs.statSync(gitPath);
-			if (stat.isDirectory()) {
-				return undefined;
-			}
-			if (stat.isFile()) {
-				const content = fs.readFileSync(gitPath, "utf8").trim();
-				const match = content.match(/^gitdir:\s*(.+)$/);
-				if (!match) {
-					return undefined;
-				}
-				const gitDir = path.resolve(dir, match[1]);
-				if (!gitDir.match(/[/\\]worktrees[/\\][^/\\]+$/)) {
-					return undefined;
-				}
-				return branchToPrefix(readBranchFromHead(gitDir) ?? "");
-			}
-		} catch {
-			// Keep walking upward.
-		}
-
-		const parent = path.dirname(dir);
-		if (parent === dir) {
-			return undefined;
-		}
-		dir = parent;
-	}
-}
-
-function readBranchFromHead(gitDir: string): string | undefined {
-	try {
-		const head = fs.readFileSync(path.join(gitDir, "HEAD"), "utf8").trim();
-		const match = head.match(/^ref: refs\/heads\/(.+)$/);
-		return match?.[1];
-	} catch {
-		return undefined;
-	}
 }
 
 function resolveRequestedApplicationName(

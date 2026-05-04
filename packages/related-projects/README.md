@@ -14,6 +14,8 @@ The package bin imports `dist/cli.js`, so build the package before using the CLI
 pnpm --filter @lightfastai/related-projects build
 ```
 
+Worktree identity primitives live in `@lightfastai/dev-core`. Machine-level local service helpers live in `@lightfastai/dev-services`.
+
 ## Publishing
 
 This package is set up for local npm publishing. There is no GitHub Actions release flow.
@@ -143,7 +145,7 @@ Command behavior:
 - `run`: starts the Portless proxy, then runs `portless-mfe dev` through `portless run` for the command after `--`.
 - `proxy`: generates the local microfrontends config and starts the Vercel Microfrontends proxy runtime.
 - `url`: prints the resolved Portless URL. Pass `--app <name>` to resolve an application URL from the Vercel Microfrontends config.
-- `identity`: prints the resolved runtime identity name. Pass `--json` to include `name`, `baseName`, `targetUrl`, and `worktreePrefix` when a worktree prefix is present.
+- `identity`: prints the resolved Portless runtime identity name. Pass `--json` to include `name`, `baseName`, `targetUrl`, and `worktreePrefix` when a worktree prefix is present. Use `lightfast-dev-services identity --app-name <name>` for names that should only depend on git worktree state.
 
 Options accepted by one or more commands:
 
@@ -152,6 +154,7 @@ Options accepted by one or more commands:
 - `--local-app <name>`: limit local microfrontend handling to one application. Repeat the flag for multiple apps.
 - `--path <path>`: append a path to the resolved Portless URL.
 - `--target-url <url>`: bypass Portless URL resolution and use an explicit target URL.
+- `--app-name <name>`: runtime base application name for `identity`.
 - `--json`: print JSON for commands that support it.
 
 When `dev` or `proxy` generates local microfrontends state, it sets:
@@ -204,3 +207,34 @@ Config schema export:
 ```json
 "$schema": "./node_modules/@lightfastai/related-projects/schema/config.schema.json"
 ```
+
+## Local Dev Services
+
+This package does not start app-specific singleton services, but consumers should keep machine-level dev tools out of per-worktree Turbo sidecars. The reusable singleton-service APIs and wrapper CLI live in `@lightfastai/dev-services`.
+
+For Inngest, first run a single Dev Server with auto-discovery enabled:
+
+```sh
+npx inngest-cli@latest dev
+```
+
+Wrap `portless-mfe` with `lightfast-dev-services inngest-sync` when you want selected local apps synced into that singleton:
+
+```sh
+lightfast-dev-services inngest-sync --mfe-app app --mfe-app www -- \
+  portless-mfe turbo run dev --filter=app --filter=www
+```
+
+The wrapper resolves each MFE app URL through this package, then syncs `/api/inngest` by calling `PUT` after the route becomes available. Apps without an Inngest route are skipped when they return `404` or `405`; transient failures are retried. Set `PORTLESS_MFE_INNGEST_SYNC=0` or pass `--no-inngest-sync` to the wrapper to disable this.
+
+If you are not using `portless-mfe dev`, or you need to wire URLs manually, sync the app serve URLs into the singleton:
+
+```sh
+npx inngest-cli@latest dev \
+  -u http://app.mfe.localhost:1355/api/inngest \
+  -u http://www.mfe.localhost:1355/api/inngest
+```
+
+If the Inngest UI collapses multiple worktrees that expose the same app ID, use `resolveWorktreeRuntimeName("lightfast-app")` and `resolveWorktreeRuntimeName("lightfast-platform")` from `@lightfastai/dev-core` in the consuming app's local Inngest clients. Do not add a checked-in `inngest.json` just for worktree discovery.
+
+For Drizzle Studio, run one Studio process per machine, normally on Drizzle's default `127.0.0.1:4983`. Worktrees should reuse that process instead of starting their own Studio sidecars.

@@ -7,7 +7,11 @@ import path from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
-import { buildBridgeRequestHeaders, stripHopByHopHeaders } from "./bridge-headers.js";
+import {
+	buildBridgeExternalOrigin,
+	buildBridgeRequestHeaders,
+	stripHopByHopHeaders,
+} from "./bridge-headers.js";
 import {
 	addTurboDevEnvMode,
 	createVercelMicrofrontendsDevEnv,
@@ -693,9 +697,14 @@ function proxyToPortlessApp({
 }): void {
 	const target = new URL(req.url ?? "/", targetUrl);
 	const headers = buildBridgeRequestHeaders(req.headers, target, {
-		forwardedHost: externalHost,
+		forwardedHost: target.host,
 		forwardedProto: target.protocol.replace(":", ""),
 		forwardedPort: target.port || (target.protocol === "https:" ? "443" : "80"),
+		externalOrigin: buildBridgeExternalOrigin({
+			sourceHeaders: req.headers,
+			externalHost,
+			target,
+		}),
 	});
 	const requestModule = target.protocol === "https:" ? https : http;
 	const proxyReq = requestModule.request(
@@ -760,9 +769,14 @@ function proxyUpgradeToPortlessApp({
 
 	const target = new URL(req.url ?? "/", targetUrl);
 	const headers = buildBridgeRequestHeaders(req.headers, target, {
-		forwardedHost: externalHost,
+		forwardedHost: target.host,
 		forwardedProto: target.protocol.replace(":", ""),
 		forwardedPort: target.port || (target.protocol === "https:" ? "443" : "80"),
+		externalOrigin: buildBridgeExternalOrigin({
+			sourceHeaders: req.headers,
+			externalHost,
+			target,
+		}),
 	});
 	const requestModule = target.protocol === "https:" ? https : http;
 	const proxyReq = requestModule.request({
