@@ -152,7 +152,8 @@ export interface VercelMicrofrontendsDevConfigResult {
 	host: string;
 	localProxyPort: number;
 	appUrls: Record<string, string>;
-	appBridgePorts: Record<string, number>;
+	appLocalUrls: Record<string, string>;
+	appPorts: Record<string, number>;
 	appDirs: Record<string, string>;
 	sourceConfig: MicrofrontendsSourceConfig;
 	generatedConfig: MicrofrontendsSourceConfig;
@@ -208,11 +209,11 @@ type FallbackCommand = [string, string[]];
 
 const CONFIG_FILENAMES = ["related-projects.json"];
 const RUNTIME_CONFIG_FILENAME = "microfrontends.local.json";
-const DEFAULT_APP_BRIDGE_PORT_RANGE = { min: 5100, max: 8999 };
 const DEFAULT_PROXY_PORT_RANGE = { min: 9000, max: 9999 };
 const DEFAULT_PORTLESS_PORT = 1355;
 const DEFAULT_PORTLESS_NAME = "mfe";
 const DEFAULT_PORTLESS_TLD = "localhost";
+const DEFAULT_MFE_APP_PORT_RANGE = { min: 3000, max: 8000 };
 
 const RESERVED_PORTS = new Set([
 	0,
@@ -597,6 +598,8 @@ export async function createVercelMicrofrontendsDevConfig({
 		getPortlessUrl,
 		detectWorktreePrefix,
 	});
+	const tld = env.PORTLESS_TLD || normalized.portless.tld;
+	const baseHost = `${normalized.portless.name}.${tld}`;
 	const localProxyPort = await resolveLocalProxyPort(host, {
 		env,
 		range: mfeConfigOptions.proxyPortRange,
@@ -622,18 +625,21 @@ export async function createVercelMicrofrontendsDevConfig({
 			}),
 		]),
 	);
-	const appBridgePorts: Record<string, number> = {};
-	const usedPorts = new Set([localProxyPort]);
-	for (const appName of Object.keys(applications)) {
-		const port = await choosePort(`${host}:${appName}:bridge`, {
-			min: DEFAULT_APP_BRIDGE_PORT_RANGE.min,
-			max: DEFAULT_APP_BRIDGE_PORT_RANGE.max,
-			usedPorts,
-			portAvailable,
-		});
-		usedPorts.add(port);
-		appBridgePorts[appName] = port;
-	}
+	const usedAppPorts = new Set<number>();
+	const appPorts = Object.fromEntries(
+		Object.keys(applications).map((appName) => {
+			const seed = host === baseHost ? appName : `${host}:${appName}`;
+			const port = generateMicrofrontendsPort(seed, { usedPorts: usedAppPorts });
+			usedAppPorts.add(port);
+			return [appName, port];
+		}),
+	);
+	const appLocalUrls = Object.fromEntries(
+		Object.entries(appUrls).map(([appName, appUrl]) => [
+			appName,
+			createMicrofrontendsLocalAppUrl(appUrl, appPorts[appName]),
+		]),
+	);
 
 	const generatedConfig = {
 		...sourceConfig,
@@ -647,7 +653,7 @@ export async function createVercelMicrofrontendsDevConfig({
 					...appConfig,
 					development: {
 						...(appConfig.development ?? {}),
-						local: appBridgePorts[appName],
+						local: appLocalUrls[appName],
 					},
 				};
 				return [
@@ -669,7 +675,8 @@ export async function createVercelMicrofrontendsDevConfig({
 		host,
 		localProxyPort,
 		appUrls,
-		appBridgePorts,
+		appLocalUrls,
+		appPorts,
 		appDirs: resolvedAppDirs,
 		sourceConfig,
 		generatedConfig,
@@ -678,6 +685,44 @@ export async function createVercelMicrofrontendsDevConfig({
 		runtimeConfigFilename: RUNTIME_CONFIG_FILENAME,
 		localAppNames: Object.keys(applications),
 	};
+}
+
+export function generateMicrofrontendsPort(
+	name: string,
+	{
+		minPort = DEFAULT_MFE_APP_PORT_RANGE.min,
+		maxPort = DEFAULT_MFE_APP_PORT_RANGE.max,
+		usedPorts = new Set<number>(),
+	}: { minPort?: number; maxPort?: number; usedPorts?: Set<number> } = {},
+): number {
+	if (!name) {
+		throw new Error("Name is required to generate a microfrontends port.");
+	}
+	if (!Number.isInteger(minPort) || !Number.isInteger(maxPort) || maxPort <= minPort) {
+		throw new Error(`Invalid microfrontends port range ${minPort}-${maxPort}.`);
+	}
+
+	let hash = 0;
+	for (let i = 0; i < name.length; i++) {
+		hash = (hash << 5) - hash + name.charCodeAt(i);
+		hash |= 0;
+	}
+
+	const size = maxPort - minPort;
+	const offset = Math.abs(hash) % size;
+	for (let i = 0; i < size; i++) {
+		const port = minPort + ((offset + i) % size);
+		if (!usedPorts.has(port)) {
+			return port;
+		}
+	}
+
+	throw new Error(`No available microfrontends app port found in range ${minPort}-${maxPort} for ${name}`);
+}
+
+export function createMicrofrontendsLocalAppUrl(appUrl: string, appPort: number): string {
+	const url = new URL(appUrl);
+	return `http://${url.hostname}:${appPort}`;
 }
 
 function addLocalAssetPrefixRoute(

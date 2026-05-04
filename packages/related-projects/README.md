@@ -117,7 +117,9 @@ Those scripts build this package first, then call `portless-mfe`.
 
 For the normal Turbo dev flow, keep the source Vercel Microfrontends config at the path named by `microfrontends.config`. In this sandbox that file is `microfrontends.json` at the repo root. `portless-mfe dev` writes `microfrontends.local.json` next to that source file and injects the generated path into `VC_MICROFRONTENDS_CONFIG`.
 
-When the wrapped command is a Turbo dev command, Turbo owns the local Microfrontends proxy. `portless-mfe` still starts bridge servers for each local app so the generated `development.local` ports can forward to the app-specific Portless URLs:
+When the wrapped command is a Turbo dev command, Turbo owns the local Microfrontends proxy. `portless-mfe` generates `development.local` URL values that use each app's Portless hostname with the deterministic Vercel Microfrontends app port, for example `http://app.lightfast.localhost:5502`.
+
+Each local app should run through `portless-mfe app`. It owns the deterministic app URL port, starts the app on an internal loopback port, and preserves standard forwarded origin headers for both direct app traffic and aggregate Microfrontends traffic. The browser still uses the normal Portless URL, such as `https://app.lightfast.localhost`:
 
 ```sh
 pnpm dev
@@ -133,6 +135,7 @@ Available commands:
 portless-mfe turbo [--name <name>] [--local-app <name>] run dev [...turbo args]
 portless-mfe dev [--local-app <name>] -- <command> [...args]
 portless-mfe run [--name <name>] [--local-app <name>] -- <command> [...args]
+portless-mfe app -- <command> [...args]
 portless-mfe proxy [--local-app <name>]
 portless-mfe url [--app <name>] [--path <path>] [--json]
 portless-mfe identity [--path <path>] [--app-name <name>] [--json]
@@ -141,8 +144,9 @@ portless-mfe identity [--path <path>] [--app-name <name>] [--json]
 Command behavior:
 
 - `turbo`: starts the Portless proxy, then runs `portless-mfe dev` through `portless run`. Turbo dev commands get `--env-mode=loose` unless an env mode is already present.
-- `dev`: generates `microfrontends.local.json` next to the configured Vercel Microfrontends config, sets the local microfrontends environment variables, starts local app bridge servers, then runs the command after `--`. For non-Turbo commands it also starts the Vercel Microfrontends proxy runtime.
+- `dev`: generates `microfrontends.local.json` next to the configured Vercel Microfrontends config, sets the local microfrontends environment variables, then runs the command after `--`. For non-Turbo commands it also starts the Vercel Microfrontends proxy runtime.
 - `run`: starts the Portless proxy, then runs `portless-mfe dev` through `portless run` for the command after `--`.
+- `app`: runs one app through Portless on the deterministic Vercel Microfrontends app port for the current app directory, with an internal origin adapter forwarding to the actual app process.
 - `proxy`: generates the local microfrontends config and starts the Vercel Microfrontends proxy runtime.
 - `url`: prints the resolved Portless URL. Pass `--app <name>` to resolve an application URL from the Vercel Microfrontends config.
 - `identity`: prints the resolved Portless runtime identity name. Pass `--json` to include `name`, `baseName`, `targetUrl`, and `worktreePrefix` when a worktree prefix is present. Use `lightfast-dev-services identity --app-name <name>` for names that should only depend on git worktree state.

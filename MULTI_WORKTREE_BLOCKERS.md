@@ -362,9 +362,10 @@ only localhost or URLs that start with the configured app URL.
 
 **Why it blocks multi-worktree:** a connect flow launched from worktree B can
 be rejected, or it can complete and redirect back to worktree A's canonical
-app. Because OAuth state, token vault writes, DB records, Redis keys, and
-Inngest events may share backend services, even a successful flow can mutate
-shared state in ways that make verification ambiguous.
+app. Because OAuth state, DB records, Redis keys, and Inngest events may share
+backend services, even a successful flow can mutate shared state in ways that
+make verification ambiguous. Token vault behavior is deferred for the initial
+multi-worktree pass.
 
 Specific state/origin surfaces:
 
@@ -480,29 +481,202 @@ code directly.
 - the docs distinguish "platform HTTP process" from "platform router imported
   into app".
 
+### B11. Upstash Realtime Uses Global Redis Stream And Pub/Sub Channels
+
+**Status:** open
+
+Lightfast does not only use Redis as a simple key/value store. The active
+Realtime path uses `@repo/app-upstash-realtime`, which passes the shared
+`@vendor/upstash` Redis client into `@upstash/realtime`.
+
+Important active surfaces:
+
+- `packages/app-upstash-realtime/src/index.ts`: constructs `new Realtime(...)`
+  from the shared Redis client.
+- `apps/app/src/app/api/gateway/realtime/route.ts`: exposes the Realtime SSE
+  handler.
+- `apps/app/src/app/api/gateway/stream/route.ts`: subscribes to
+  `realtime.channel("org-${orgId}")`.
+- `api/platform/src/inngest/functions/ingest-delivery.ts`: publishes to
+  `realtime.channel("org-${clerkOrgId}")`.
+
+`@upstash/realtime` uses the channel string as both the Redis Stream key and
+the Pub/Sub channel. A generic Redis key helper is not enough if call sites can
+still call `realtime.channel("org-...")` directly.
+
+**Why it blocks multi-worktree:** worktree A and worktree B can subscribe to,
+publish to, replay from, or trim the same Redis Stream channel. A successful
+event in one worktree can appear in another worktree's UI, and Redis Stream
+history/catch-up can make the leak persistent across reconnects.
+
+**Fix direction:** make Realtime channel construction worktree-aware at the
+package boundary. `@repo/app-upstash-realtime` should expose a channel helper
+or wrapped Realtime instance that prefixes every channel with the local
+worktree namespace when using derived dev Redis.
+
+Candidate:
+
+```text
+<redis-key-prefix>:realtime:org-<orgId>
+```
+
+The publisher and subscriber must share the same helper. Direct string channel
+construction should be treated as unsafe in app/platform code.
+
+**Done when:**
+
+- Realtime publisher and subscriber paths use the same namespaced channel
+  helper.
+- Two worktrees can stream events for the same org identifier without
+  cross-talk.
+- Redis Stream history and `Last-Event-ID` catch-up cannot replay another
+  worktree's events.
+- Tests fail if any Realtime code calls `channel("org-...")` without the
+  worktree namespace.
+
+### B12. Pinecone Vector State Is Not Worktree-Scoped
+
+**Status:** open
+
+Lightfast search state uses more than the SQL database:
+
+- `@repo/app-pinecone` wraps Pinecone indexes and optional namespaces.
+
+Pinecone is mutable shared service state. Embedding, reranking, and model/AI
+provider calls are deferred for the initial multi-worktree pass. They are
+external provider calls, not services the local launcher needs to orchestrate.
+
+**Why it blocks multi-worktree:** if Pinecone index names or namespaces are
+shared, one worktree can upsert, query, or delete vectors created by another.
+That makes search and agent acceptance tests noisy because query results can
+depend on vectors written by a different worktree.
+
+**Fix direction:** classify Pinecone in the worktree manifest:
+
+- Pinecone: isolate with worktree-aware namespace or index name.
+- Embedding/reranking/model providers: deferred; do not include them in the
+  service setup checklist for this pass.
+
+**Done when:**
+
+- Pinecone upsert/query/delete operations receive a worktree namespace or
+  isolated index in dev.
+- Search tests can prove worktree A cannot retrieve vectors written by
+  worktree B.
+- The service matrix treats Pinecone as service state and explicitly marks
+  embedding/reranking/model providers as deferred non-service provider calls.
+
+### B13. Provider OAuth And Webhook Routing Need Worktree Origins
+
+**Status:** open
+
+Provider integrations are external state machines, not just local callbacks.
+Lightfast currently loads shared dev credentials for GitHub, Vercel, Linear,
+and related webhook/OAuth configuration from per-app Vercel env files.
+
+Relevant surfaces include:
+
+- provider OAuth callback URLs and install URLs.
+- provider webhook URLs, signing secrets, and delivery retries.
+- provider OAuth state/result Redis keys.
+
+Clerk and token vault behavior are deferred for the initial multi-worktree
+pass. They should be documented later, but they are not blockers for the
+service setup work covered here.
+
+**Why it blocks multi-worktree:** worktree B can complete an OAuth flow against
+worktree A's callback origin or receive webhook retries intended for another
+run. Redis-backed OAuth state/result keys also need the same worktree namespace
+as the rest of local Redis state.
+
+**Fix direction:** split external provider state into explicit policies:
+
+- worktree-scoped callback origins, OAuth state/result keys, webhook tunnels,
+  and provider callback routing.
+- provider webhook/tunnel setup generated from the same manifest as app,
+  platform, and desktop.
+- Clerk identity/org state and token vault records are deferred notes, not
+  part of this pass's blocking setup checklist.
+
+Upstash Workflow/QStash should be handled here if it returns. The current repo
+appears to have replaced active Upstash Workflow/QStash execution with Inngest,
+but local env still contains QStash-style variables. Those variables should be
+removed from the default dev path or covered by the same callback/queue
+namespace policy.
+
+**Done when:**
+
+- OAuth authorize/callback, provider install, and webhook URLs are generated
+  from the active worktree manifest.
+- Redis OAuth state/result keys cannot collide across worktrees.
+- QStash/Workflow variables are either removed from local setup or routed
+  through a worktree-scoped queue/callback wrapper.
+
+### B14. MCP And Local Tooling Side Effects Need Worktree Selection
+
+**Status:** open
+
+Several local dev paths still point at shared tool state:
+
+- MCP/CLI consumers using `LIGHTFAST_BASE_URL`, `LIGHTFAST_API_KEY`, and local
+  app origins.
+- Desktop release/notarization/GitHub publishing env, which should never be
+  part of normal multi-worktree dev.
+
+Analytics, observability, email, content, and search integrations are deferred
+for the initial pass. They are side-effect policy items, not service setup
+blockers for the local multi-worktree environment.
+
+**Why it blocks multi-worktree:** MCP and CLI commands can accidentally talk to
+the canonical app or the wrong local worktree if their base URL and API key are
+not generated from the selected worktree. Release, notarization, and publishing
+env can trigger actions that should never be part of normal local dev.
+
+**Fix direction:** the launcher should set a local side-effect policy:
+
+- make MCP/CLI base URLs point at the active worktree origin and require an API
+  key from that worktree's DB/state.
+- keep release, notarization, and publishing env out of dev launchers.
+- record analytics/observability/email/content/search as deferred policy
+  decisions.
+
+**Done when:**
+
+- MCP and CLI commands talk to the selected worktree, not the canonical app.
+- Release, notarization, and publishing env are excluded from normal dev
+  launchers.
+- The deferred list clearly states that analytics/observability and
+  email/content/search are out of scope for this pass.
+
 ## Proposed Fix Order
 
 1. **Stabilize the sandbox runner model.** Resolve the current port/url drift
    and make `portless-mfe-dev` tests pass.
 2. **Add a worktree identity primitive.** One source of truth for sanitized id,
    generated ports, public local origin, and state paths.
-3. **Isolate ports and origins.** Prove two app/www/platform/proxy stacks can
+3. **Create a service isolation matrix.** Classify DB, Redis, Realtime,
+   Pinecone, Inngest, provider OAuth/webhook routing, MCP, and QStash/Workflow
+   if it returns as shared, worktree-scoped, disabled, or local/fake. Record
+   embedding/reranking/model providers, Clerk, token vault,
+   analytics/observability, and email/content/search as deferred.
+4. **Isolate ports and origins.** Prove two app/www/platform/proxy stacks can
    run concurrently without desktop.
-4. **Add platform to the sandbox path.** Platform must be standalone and
+5. **Add platform to the sandbox path.** Platform must be standalone and
    manifest-driven, not hidden inside MFE fixture behavior.
-5. **Isolate desktop userData.** Make two desktop instances possible before
+6. **Isolate desktop userData.** Make two desktop instances possible before
    fixing auth.
-6. **Make auth callback worktree-scoped.** Custom scheme or loopback, but the
+7. **Make auth callback worktree-scoped.** Custom scheme or loopback, but the
    callback target must be unique per desktop instance.
-7. **Widen dev CORS/Server Action checks.** Accept generated local origins while
+8. **Widen dev CORS/Server Action checks.** Accept generated local origins while
    keeping production strict.
-8. **Update platform OAuth and background runners.** Redirects, Inngest URLs,
-   DB/KV namespaces, and service auth must follow the same manifest.
-9. **Lock down tRPC boundaries.** Test HTTP CORS origins separately from
+9. **Update platform OAuth and background runners.** Redirects, Inngest URLs,
+   DB/KV namespaces, Realtime channels, provider callbacks, and service auth
+   must follow the same manifest.
+10. **Lock down tRPC boundaries.** Test HTTP CORS origins separately from
    in-process platform callers.
-10. **Update agent runbooks.** Make logs, cleanup, renderer URLs, and auth paths
+11. **Update agent runbooks.** Make logs, cleanup, renderer URLs, and auth paths
    instance-scoped.
-11. **Run the two-worktree acceptance test.** Keep failures recorded here until
+12. **Run the two-worktree acceptance test.** Keep failures recorded here until
     the whole flow passes.
 
 ## Open Design Decisions
@@ -542,6 +716,21 @@ Options:
 Likely answer: optional for the sandbox until the mechanics are proven; required
 only when testing browser-facing worktree domains.
 
+### D4. Service State Policy
+
+Options:
+
+- isolate every mutable local service per worktree
+- share provider accounts but namespace callback/routing state
+- disable inactive queue/callback services unless explicitly requested
+- record non-service provider calls and side-effect integrations as deferred
+
+Likely answer: isolate local mutable service state by default. Defer
+embedding/reranking/model providers, Clerk, token vault,
+analytics/observability, and email/content/search from the initial setup pass
+so the blocker list stays focused on services the launcher must actually
+orchestrate.
+
 ## Evidence From Lightfast Review
 
 Key observed source files in the real repo:
@@ -574,6 +763,19 @@ Key observed source files in the real repo:
 - `api/platform/src/lib/cache.ts`: global OAuth Redis key prefixes.
 - `apps/app/src/app/api/desktop/auth/lib/code-store.ts`: global desktop auth
   code Redis prefix.
+- `vendor/upstash/src/index.ts`: shared Upstash Redis client from env.
+- `packages/app-upstash-realtime/src/index.ts`: Realtime wraps the shared Redis
+  client.
+- `apps/app/src/app/api/gateway/realtime/route.ts`: Realtime SSE route.
+- `apps/app/src/app/api/gateway/stream/route.ts`: subscribes to
+  `org-${orgId}` Realtime channels.
+- `api/platform/src/inngest/functions/ingest-delivery.ts`: publishes Realtime
+  events to `org-${clerkOrgId}`.
+- `packages/app-pinecone/src/client.ts`: Pinecone operations accept optional
+  namespaces but do not enforce worktree isolation.
+- `vendor/pinecone/src/client.ts`: Pinecone index/namespace operations.
+- `core/mcp/src/index.ts`: MCP server uses `LIGHTFAST_BASE_URL` and
+  `LIGHTFAST_API_KEY`.
 - `apps/app/package.json`: fixed app port and fixed Inngest endpoint URLs.
 - `apps/platform/package.json`: fixed standalone platform port.
 - `apps/platform/turbo.json`: platform dev starts app Inngest task.
@@ -583,6 +785,16 @@ Key observed source files in the real repo:
   and canonical local fallback.
 - `api/platform/src/lib/oauth/callback.ts`: platform OAuth callback return
   origin.
+
+Deferred evidence, kept for later policy work but not active setup blockers:
+
+- `vendor/embed/src/env.ts`: Cohere/OpenAI embedding provider env.
+- `packages/app-rerank/src/index.ts`: rerank provider selection.
+- `vendor/observability/src/env/sentry-env.ts`: Sentry env.
+- `vendor/observability/src/env/betterstack.ts`: Better Stack env.
+- `vendor/analytics/src/env.ts`: PostHog env.
+- `vendor/email/src/env.ts`: Resend email env.
+- `apps/www/src/env.ts`: BaseHub and Mixedbread search env.
 
 ## Running Notes
 
@@ -599,3 +811,10 @@ fix shape.
   in-process platform router calls, documented `@vercel/related-projects`
   local-dev fallback behavior, and added global Redis/service-auth namespace
   risks for OAuth and desktop auth codes.
+- 2026-05-04: Added missing service-state blockers for Upstash Realtime,
+  Pinecone/vector namespaces, provider OAuth/webhook routing,
+  QStash/Workflow policy, and MCP/CLI base URL selection.
+- 2026-05-04: Scoped the initial setup pass down by deferring
+  embedding/reranking/model providers, Clerk, token vault,
+  analytics/observability, and email/content/search. These remain notes for
+  later policy work, not active multi-worktree service blockers.

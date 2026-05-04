@@ -6,16 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
-	BRIDGE_EXTERNAL_ORIGIN_HEADER,
-	buildBridgeExternalOrigin,
-	buildBridgeRequestHeaders,
-	buildBridgeUpgradeRequestHeaders,
-} from "../src/bridge-headers.js";
-import {
 	addTurboDevEnvMode,
 	choosePort,
 	createVercelMicrofrontendsDevEnv,
 	createVercelMicrofrontendsDevConfig,
+	generateMicrofrontendsPort,
 	getPortlessMfeDevOrigins,
 	inferLocalAppNames,
 	loadPortlessMfeConfig,
@@ -28,7 +23,10 @@ import {
 } from "../src/index.js";
 import { withPortlessMfeDev } from "../src/next.js";
 import { resolveRelatedProjectUrl } from "../src/related-projects.js";
-import type { MicrofrontendsSourceConfig } from "../src/index.js";
+import type {
+	MicrofrontendsSourceConfig,
+	VercelMicrofrontendsDevConfigResult,
+} from "../src/index.js";
 
 const require = createRequire(import.meta.url);
 
@@ -276,177 +274,6 @@ test("CommonJS Next wrapper exports the same helpers", () => {
 	);
 });
 
-test("bridge request headers rewrite host and strip stale proxy forwarding headers", () => {
-	const headers = buildBridgeRequestHeaders(
-		{
-			host: "localhost:6924",
-			origin: "http://lightfast.localhost:1355",
-			"x-forwarded-for": "127.0.0.1",
-			"x-forwarded-host": "localhost",
-			"x-forwarded-port": "443",
-			"x-forwarded-proto": "https",
-			[BRIDGE_EXTERNAL_ORIGIN_HEADER]: "http://stale.localhost:1355",
-			"x-portless": "1",
-			"x-portless-hops": "2",
-			connection: "keep-alive",
-		},
-		new URL("http://app.lightfast.localhost:1355/sign-in"),
-		{
-			forwardedHost: "app.lightfast.localhost:1355",
-			forwardedProto: "http",
-			forwardedPort: 1355,
-			externalOrigin: "http://lightfast.localhost:1355",
-		},
-	);
-
-	assert.equal(headers.host, "app.lightfast.localhost:1355");
-	assert.equal(headers.origin, "http://lightfast.localhost:1355");
-	assert.equal(headers["x-forwarded-for"], "127.0.0.1");
-	assert.equal(headers["x-forwarded-host"], "lightfast.localhost:1355");
-	assert.equal(headers["x-forwarded-port"], "1355");
-	assert.equal(headers["x-forwarded-proto"], "http");
-	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "http://lightfast.localhost:1355");
-	assert.equal(headers["x-portless"], undefined);
-	assert.equal(headers["x-portless-hops"], undefined);
-	assert.equal(headers.connection, undefined);
-});
-
-test("bridge request headers preserve worktree aggregate origin separately from app origin", () => {
-	const target = new URL("https://fix-ui.app.lightfast.localhost/sign-in");
-	const externalOrigin = buildBridgeExternalOrigin(
-		"fix-ui.lightfast.localhost",
-		target,
-	);
-	const headers = buildBridgeRequestHeaders(
-		{ host: "127.0.0.1:6924" },
-		target,
-		{
-			forwardedHost: target.host,
-			forwardedProto: target.protocol.replace(":", ""),
-			forwardedPort: target.port || "443",
-			externalOrigin,
-		},
-	);
-
-	assert.equal(externalOrigin, "https://fix-ui.lightfast.localhost");
-	assert.equal(headers.host, "fix-ui.app.lightfast.localhost");
-	assert.equal(headers["x-forwarded-host"], "fix-ui.lightfast.localhost");
-	assert.equal(headers["x-forwarded-port"], "443");
-	assert.equal(headers["x-forwarded-proto"], "https");
-	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "https://fix-ui.lightfast.localhost");
-	assert.equal(
-		buildBridgeExternalOrigin(
-			"fix-ui.mfe.localhost",
-			new URL("http://fix-ui.app.mfe.localhost:1355/sign-in"),
-		),
-		"http://fix-ui.mfe.localhost:1355",
-	);
-});
-
-test("bridge request headers use resolved app URL for host and aggregate origin for forwarded host", () => {
-	const headers = buildBridgeRequestHeaders(
-		{ host: "127.0.0.1:6924" },
-		new URL("https://fix-ui.app.lightfast.localhost/sign-in"),
-		{
-			forwardedHost: "this-would-be-wrong.localhost",
-			forwardedProto: "http",
-			forwardedPort: 1355,
-			externalOrigin: "https://fix-ui.lightfast.localhost",
-		},
-	);
-
-	assert.equal(headers.host, "fix-ui.app.lightfast.localhost");
-	assert.equal(headers["x-forwarded-host"], "fix-ui.lightfast.localhost");
-	assert.equal(headers["x-forwarded-port"], "443");
-	assert.equal(headers["x-forwarded-proto"], "https");
-	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "https://fix-ui.lightfast.localhost");
-});
-
-test("bridge upgrade headers preserve websocket handshake while forwarding aggregate origin", () => {
-	const headers = buildBridgeUpgradeRequestHeaders(
-		{
-			host: "127.0.0.1:6924",
-			connection: "keep-alive, Upgrade",
-			upgrade: "websocket",
-			"sec-websocket-key": "test-key",
-			"sec-websocket-version": "13",
-			"x-forwarded-host": "localhost",
-			"x-forwarded-port": "443",
-			"x-forwarded-proto": "https",
-		},
-		new URL("https://fix-ui.app.lightfast.localhost/_next/webpack-hmr?id=test"),
-		{
-			forwardedHost: "this-would-be-wrong.localhost",
-			forwardedProto: "http",
-			forwardedPort: 1355,
-			externalOrigin: "https://fix-ui.lightfast.localhost",
-		},
-	);
-
-	assert.equal(headers.host, "fix-ui.app.lightfast.localhost");
-	assert.equal(headers.connection, "Upgrade");
-	assert.equal(headers.upgrade, "websocket");
-	assert.equal(headers["sec-websocket-key"], "test-key");
-	assert.equal(headers["sec-websocket-version"], "13");
-	assert.equal(headers["x-forwarded-host"], "fix-ui.lightfast.localhost");
-	assert.equal(headers["x-forwarded-port"], "443");
-	assert.equal(headers["x-forwarded-proto"], "https");
-	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "https://fix-ui.lightfast.localhost");
-});
-
-test("bridge external origin prefers upstream forwarded browser origin", () => {
-	const target = new URL("http://app.lightfast.localhost:1355/account/welcome");
-
-	assert.equal(
-		buildBridgeExternalOrigin({
-			sourceHeaders: {
-				"x-forwarded-host": "lightfast.localhost",
-				"x-forwarded-proto": "https",
-				"x-forwarded-port": "443",
-			},
-			externalHost: "lightfast.localhost",
-			target,
-		}),
-		"https://lightfast.localhost",
-	);
-	assert.equal(
-		buildBridgeExternalOrigin({
-			sourceHeaders: {
-				"x-forwarded-host": "lightfast.localhost:1355",
-				"x-forwarded-proto": "http",
-				"x-forwarded-port": "1355",
-			},
-			externalHost: "lightfast.localhost",
-			target,
-		}),
-		"http://lightfast.localhost:1355",
-	);
-	assert.equal(
-		buildBridgeExternalOrigin({
-			sourceHeaders: {
-				"x-forwarded-host": "fix-ui.lightfast.localhost",
-				"x-forwarded-proto": "https",
-				"x-forwarded-port": "443",
-			},
-			externalHost: "fix-ui.lightfast.localhost",
-			target: new URL("http://fix-ui.app.lightfast.localhost:1355/account/welcome"),
-		}),
-		"https://fix-ui.lightfast.localhost",
-	);
-	assert.equal(
-		buildBridgeExternalOrigin({
-			sourceHeaders: {
-				"x-forwarded-host": "localhost",
-				"x-forwarded-proto": "http",
-				"x-forwarded-port": "443",
-			},
-			externalHost: "fix-ui.lightfast.localhost",
-			target: new URL("http://fix-ui.app.lightfast.localhost:1355/account/welcome"),
-		}),
-		"https://fix-ui.lightfast.localhost",
-	);
-});
-
 test("package export map supports intended ESM imports", () => {
 	const result = runNode([
 		"--input-type=module",
@@ -552,30 +379,34 @@ test("createVercelMicrofrontendsDevConfig infers arbitrary app directories", asy
 		www: "http://feature.www.mfe.localhost:1355/",
 	});
 	assert.deepEqual(
-		Object.keys(result.appBridgePorts),
-		["app", "platform", "www"],
+		result.appPorts,
+		expectedAppPorts(["app", "platform", "www"], "feature.mfe.localhost", "mfe.localhost"),
 	);
+	assert.equal("appBridgePorts" in result, false);
 	const generatedConfig = result.generatedConfig as MicrofrontendsSourceConfig & {
 		applications: {
+			app: {
+				development: {
+					local: string;
+				};
+			};
 			platform: {
 				development: {
-					local: number;
+					local: string;
 				};
 			};
 			www: {
+				development: {
+					local: string;
+				};
 				routing: Array<{ paths: string[] }>;
 			};
 		};
 	};
-	assert.equal(typeof generatedConfig.applications.platform.development.local, "number");
-	assert.equal(
-		generatedConfig.applications.platform.development.local,
-		result.appBridgePorts.platform,
-	);
-	assert.notEqual(result.appBridgePorts.platform, 7777);
-	for (const port of Object.values(result.appBridgePorts)) {
-		assert.equal(port >= 5100 && port <= 8999, true);
-	}
+	assert.equal(generatedConfig.applications.app.development.local, result.appLocalUrls.app);
+	assert.equal(generatedConfig.applications.platform.development.local, result.appLocalUrls.platform);
+	assert.equal(generatedConfig.applications.www.development.local, result.appLocalUrls.www);
+	assertValidMicrofrontendsDevConfig(result.generatedConfig);
 	assert.equal(
 		generatedConfig.applications.www.routing[0].paths.includes("/vc-ap-4eae35/:path*"),
 		true,
@@ -643,6 +474,91 @@ test("resolvePortlessApplicationUrl supports Lightfast-style package names and o
 		}),
 		"http://docs.lightfast.localhost:1355/",
 	);
+});
+
+test("createVercelMicrofrontendsDevConfig uses app-host local URLs for Lightfast hosts", async () => {
+	const root = createLightfastFixtureWorkspace();
+	const baseConfig = {
+		root,
+		portless: {
+			name: "lightfast",
+			port: 443,
+			https: true,
+		},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+		},
+	};
+
+	const main = await createVercelMicrofrontendsDevConfig({
+		cwd: root,
+		config: baseConfig,
+		env: {},
+		write: false,
+		portAvailable: async () => true,
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => undefined,
+	});
+	const worktree = await createVercelMicrofrontendsDevConfig({
+		cwd: root,
+		config: baseConfig,
+		env: {},
+		write: false,
+		portAvailable: async () => true,
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => "fix-ui",
+	});
+	const secondWorktree = await createVercelMicrofrontendsDevConfig({
+		cwd: root,
+		config: baseConfig,
+		env: {},
+		write: false,
+		portAvailable: async () => true,
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => "fix-clerk",
+	});
+
+	assert.equal(main.host, "lightfast.localhost");
+	assert.equal(main.appUrls["lightfast-app"], "https://app.lightfast.localhost/");
+	assert.equal(main.appPorts["lightfast-app"], generateMicrofrontendsPort("lightfast-app"));
+	assert.equal(
+		getGeneratedLocal(main, "lightfast-app"),
+		`http://app.lightfast.localhost:${generateMicrofrontendsPort("lightfast-app")}`,
+	);
+	assert.equal("appBridgePorts" in main, false);
+	assertValidMicrofrontendsDevConfig(main.generatedConfig);
+
+	assert.equal(worktree.host, "fix-ui.lightfast.localhost");
+	assert.equal(
+		worktree.appUrls["lightfast-app"],
+		"https://fix-ui.app.lightfast.localhost/",
+	);
+	assert.equal(
+		worktree.appPorts["lightfast-app"],
+		expectedAppPorts(["lightfast-app", "lightfast-www"], "fix-ui.lightfast.localhost", "lightfast.localhost")[
+			"lightfast-app"
+		],
+	);
+	assert.notEqual(worktree.appPorts["lightfast-app"], main.appPorts["lightfast-app"]);
+	assert.equal(
+		getGeneratedLocal(worktree, "lightfast-app"),
+		`http://fix-ui.app.lightfast.localhost:${worktree.appPorts["lightfast-app"]}`,
+	);
+	assert.equal("appBridgePorts" in worktree, false);
+	assertValidMicrofrontendsDevConfig(worktree.generatedConfig);
+
+	assert.equal(secondWorktree.host, "fix-clerk.lightfast.localhost");
+	assert.equal(
+		secondWorktree.appUrls["lightfast-app"],
+		"https://fix-clerk.app.lightfast.localhost/",
+	);
+	assert.equal(
+		getGeneratedLocal(secondWorktree, "lightfast-app"),
+		`http://fix-clerk.app.lightfast.localhost:${secondWorktree.appPorts["lightfast-app"]}`,
+	);
+	assert.notEqual(secondWorktree.appPorts["lightfast-app"], main.appPorts["lightfast-app"]);
+	assert.notEqual(secondWorktree.appPorts["lightfast-app"], worktree.appPorts["lightfast-app"]);
+	assertValidMicrofrontendsDevConfig(secondWorktree.generatedConfig);
 });
 
 test("inferLocalAppNames uses command filters and falls back without --local-app", () => {
@@ -929,6 +845,50 @@ function createLightfastFixtureWorkspace() {
 		},
 	});
 	return root;
+}
+
+function getGeneratedLocal(
+	result: VercelMicrofrontendsDevConfigResult,
+	appName: string,
+): string | undefined {
+	const appConfig = result.generatedConfig.applications?.[appName];
+	const local = appConfig?.development?.local;
+	return typeof local === "string" ? local : undefined;
+}
+
+function expectedAppPorts(
+	appNames: string[],
+	host: string,
+	baseHost: string,
+): Record<string, number> {
+	const usedPorts = new Set<number>();
+	return Object.fromEntries(
+		appNames.map((appName) => {
+			const seed = host === baseHost ? appName : `${host}:${appName}`;
+			const port = generateMicrofrontendsPort(seed, { usedPorts });
+			usedPorts.add(port);
+			return [appName, port];
+		}),
+	);
+}
+
+function assertValidMicrofrontendsDevConfig(
+	config: MicrofrontendsSourceConfig,
+): void {
+	assert.equal(typeof config.options?.localProxyPort, "number");
+	for (const [appName, appConfig] of Object.entries(config.applications ?? {})) {
+		assert.equal(
+			typeof appConfig.development?.fallback,
+			"string",
+			`${appName} must keep a development fallback`,
+		);
+		assert.equal(
+			typeof appConfig.development?.local,
+			"string",
+			`${appName} must use a URL development.local`,
+		);
+		assert.doesNotThrow(() => new URL(appConfig.development?.local as string));
+	}
 }
 
 function writeJson(filePath: string, value: unknown) {

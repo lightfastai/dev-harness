@@ -1,30 +1,27 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import http from "node:http";
-import https from "node:https";
+import fs from "node:fs";
 import path from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
-import type { IncomingMessage, Server, ServerResponse } from "node:http";
-import type { Duplex } from "node:stream";
-import {
-	buildBridgeExternalOrigin,
-	buildBridgeRequestHeaders,
-	buildBridgeUpgradeRequestHeaders,
-	stripHopByHopHeaders,
-} from "./bridge-headers.js";
 import {
 	addTurboDevEnvMode,
+	buildPortlessEnv,
 	createVercelMicrofrontendsDevEnv,
 	createVercelMicrofrontendsDevConfig,
 	inferLocalAppNames,
 	loadPortlessMfeConfig,
+	resolveApplicationPortlessName,
 	resolvePortlessApplicationUrl,
 	resolvePortlessMfeRuntime,
 	resolvePortlessMfeUrl,
 	startPortlessProxy,
 } from "./index.js";
-import type { Env, VercelMicrofrontendsDevConfigResult } from "./index.js";
+import type {
+	Env,
+	MicrofrontendsSourceConfig,
+	VercelMicrofrontendsDevConfigResult,
+} from "./index.js";
 
 const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 
@@ -54,19 +51,6 @@ interface ParsedOptions {
 	options: CliOptions;
 }
 
-interface PortlessAppBridge {
-	appName: string;
-	port: number;
-	targetUrl: string;
-	server: Server;
-	closed: boolean;
-}
-
-interface MicrofrontendsProxyRuntime {
-	proxy?: ChildProcess;
-	bridges: PortlessAppBridge[];
-}
-
 type SpawnFallbackCommand = [string, string[], SpawnOptions?];
 
 const args = process.argv.slice(2);
@@ -82,6 +66,12 @@ try {
 			break;
 		case "run":
 			await handleRun(args);
+			break;
+		case "app":
+			await handleApp(args);
+			break;
+		case "app-runtime":
+			await handleAppRuntime(args);
 			break;
 		case "url":
 			await handleUrl(args);
@@ -205,7 +195,6 @@ async function handleDev(args: string[]): Promise<void> {
 			`MFE generated config: ${path.relative(config.root, result.generatedConfigPath)}`,
 			`MFE local apps: ${localApps.join(", ")}`,
 			...Object.entries(result.appUrls).map(([appName, url]) => `${appName} url: ${url}`),
-			...Object.entries(result.appBridgePorts ?? {}).map(([appName, port]) => `${appName} bridge: http://127.0.0.1:${port}`),
 		].join("\n"),
 	);
 
@@ -243,13 +232,12 @@ async function handleDev(args: string[]): Promise<void> {
 	}
 
 	if (proxyRuntime) {
-		proxyRuntime.proxy?.on("exit", (code, signal) => {
+		proxyRuntime.on("exit", (code, signal) => {
 			if (shuttingDown) {
 				return;
 			}
 
 			shuttingDown = true;
-			closePortlessAppBridges(proxyRuntime.bridges);
 			if (!child.killed) {
 				child.kill("SIGTERM");
 			}
@@ -309,12 +297,121 @@ async function handleProxy(args: string[]): Promise<void> {
 		});
 	}
 
-	proxyRuntime.proxy?.on("exit", (code, signal) => {
-		closePortlessAppBridges(proxyRuntime.bridges);
+	proxyRuntime?.on("exit", (code, signal) => {
 		if (signal) {
 			process.exit(signalExitCode(signal));
 			return;
 		}
+		process.exit(code ?? 0);
+	});
+}
+
+async function handleApp(args: string[]): Promise<void> {
+	const { options, commandArgs } = parseCommandArgs(args);
+	if (!commandArgs.length) {
+		throw new Error("Usage: portless-mfe app -- <command> [...args]");
+	}
+
+	const config = await loadPortlessMfeConfig({
+		cwd: process.cwd(),
+		configPath: options.config,
+	});
+	const appEnv = withExistingMicrofrontendsProxyPort(process.env);
+	const result = await createVercelMicrofrontendsDevConfig({
+		cwd: config.root,
+		config,
+		env: appEnv,
+		write: !appEnv.VC_MICROFRONTENDS_CONFIG,
+	});
+	const [appName, ...extraApps] = inferLocalAppNames({
+		applications: result.sourceConfig.applications,
+		appDirs: result.appDirs,
+		cwd: process.cwd(),
+		root: config.root,
+		env: {},
+	});
+	if (!appName || extraApps.length) {
+		throw new Error("portless-mfe app must be run from exactly one configured app directory.");
+	}
+
+	const appConfig = result.sourceConfig.applications?.[appName] ?? {};
+	const appPort = result.appPorts[appName];
+	if (!appPort) {
+		throw new Error(`Could not resolve local app port for "${appName}".`);
+	}
+	const portlessName = resolveApplicationPortlessName(appName, appConfig, config);
+	const runtimeEnv = createVercelMicrofrontendsDevEnv({
+		result,
+		localApps: [appName],
+		env: buildPortlessEnv(config, appEnv),
+	});
+	const child = spawn("portless", [
+		"run",
+		"--name",
+		portlessName,
+		"--app-port",
+		String(appPort),
+		"portless-mfe",
+		"app-runtime",
+		"--",
+		...commandArgs,
+	], {
+		cwd: process.cwd(),
+		env: runtimeEnv,
+		stdio: "inherit",
+	});
+
+	for (const signal of SIGNALS) {
+		process.on(signal, () => {
+			if (!child.killed) {
+				child.kill(signal);
+			}
+		});
+	}
+
+	child.on("exit", (code, signal) => {
+		if (signal) {
+			process.exit(signalExitCode(signal));
+			return;
+		}
+
+		process.exit(code ?? 0);
+	});
+}
+
+async function handleAppRuntime(args: string[]): Promise<void> {
+	const { commandArgs } = parseCommandArgs(args);
+	if (!commandArgs.length) {
+		throw new Error("Usage: portless-mfe app-runtime -- <command> [...args]");
+	}
+
+	const childEnv = {
+		...process.env,
+		HOST: "127.0.0.1",
+		MFE_DISABLE_LOCAL_PROXY_REWRITE: "1",
+	};
+	const child = spawn(commandArgs[0], commandArgs.slice(1), {
+		cwd: process.cwd(),
+		env: childEnv,
+		stdio: "inherit",
+	});
+
+	const shutdown = (signal: NodeJS.Signals) => {
+		if (!child.killed) {
+			child.kill(signal);
+		}
+	};
+
+	for (const signal of SIGNALS) {
+		process.on(signal, () => shutdown(signal));
+	}
+
+	child.on("exit", (code, signal) => {
+		if (signal) {
+			process.exit(signalExitCode(signal));
+			return;
+		}
+
 		process.exit(code ?? 0);
 	});
 }
@@ -615,277 +712,23 @@ async function startMicrofrontendsProxyRuntime({
 	localApps: string[];
 	env: Env;
 	startProxy?: boolean;
-}): Promise<MicrofrontendsProxyRuntime> {
-	const bridges = await startPortlessAppBridges({ result, localApps });
-	let proxy: ChildProcess | undefined;
-	try {
-		if (!startProxy) {
-			return { bridges };
-		}
-		proxy = await startMicrofrontendsProxy({ config, result, localApps, env });
-		return { proxy, bridges };
-	} catch (error) {
-		if (proxy && !proxy.killed) {
-			proxy.kill("SIGTERM");
-		}
-		closePortlessAppBridges(bridges);
-		throw error;
-	}
-}
-
-async function startPortlessAppBridges({
-	result,
-	localApps,
-}: {
-	result: VercelMicrofrontendsDevConfigResult;
-	localApps: string[];
-}): Promise<PortlessAppBridge[]> {
-	const bridges: PortlessAppBridge[] = [];
-
-	for (const appName of localApps) {
-		const targetUrl = result.appUrls?.[appName];
-		const port = result.appBridgePorts?.[appName];
-		if (!targetUrl || !port) {
-			continue;
-		}
-
-		const server = http.createServer((req, res) => {
-			proxyToPortlessApp({ appName, targetUrl, externalHost: result.host, req, res });
-		});
-		server.on("clientError", (_error, socket) => {
-			if (socket.writable) {
-				socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
-			}
-		});
-		server.on("upgrade", (req, socket, head) => {
-			proxyUpgradeToPortlessApp({ targetUrl, externalHost: result.host, req, socket, head });
-		});
-		await listen(server, port);
-		bridges.push({ appName, port, targetUrl, server, closed: false });
+}): Promise<ChildProcess | undefined> {
+	if (!startProxy) {
+		return undefined;
 	}
 
-	return bridges;
-}
-
-function listen(server: Server, port: number): Promise<void> {
-	return new Promise<void>((resolve, reject) => {
-		const onError = (error: Error) => {
-			server.off("listening", onListening);
-			reject(error);
-		};
-		const onListening = () => {
-			server.off("error", onError);
-			resolve();
-		};
-		server.once("error", onError);
-		server.once("listening", onListening);
-		server.listen(port, "127.0.0.1");
-	});
-}
-
-function proxyToPortlessApp({
-	appName,
-	targetUrl,
-	externalHost,
-	req,
-	res,
-}: {
-	appName: string;
-	targetUrl: string;
-	externalHost: string;
-	req: IncomingMessage;
-	res: ServerResponse;
-}): void {
-	const target = new URL(req.url ?? "/", targetUrl);
-	const headers = buildBridgeRequestHeaders(req.headers, target, {
-		forwardedHost: target.host,
-		forwardedProto: target.protocol.replace(":", ""),
-		forwardedPort: target.port || (target.protocol === "https:" ? "443" : "80"),
-		externalOrigin: buildBridgeExternalOrigin({
-			sourceHeaders: req.headers,
-			externalHost,
-			target,
-		}),
-	});
-	const requestModule = target.protocol === "https:" ? https : http;
-	const proxyReq = requestModule.request(
-		{
-			protocol: target.protocol,
-			hostname: target.hostname,
-			port: target.port || (target.protocol === "https:" ? 443 : 80),
-			path: `${target.pathname}${target.search}`,
-			method: req.method,
-			headers,
-		},
-		(proxyRes) => {
-			const responseHeaders = stripHopByHopHeaders(proxyRes.headers);
-			proxyRes.on("error", () => {
-				if (!res.destroyed) {
-					res.destroy();
-				}
-			});
-			safeWriteHead(res, proxyRes.statusCode ?? 502, responseHeaders);
-			proxyRes.pipe(res);
-		},
-	);
-
-	proxyReq.on("error", (error) => {
-		if (!res.destroyed && !res.writableEnded) {
-			if (!res.headersSent) {
-				safeWriteHead(res, 502, { "Content-Type": "text/plain" });
-			}
-			safeEnd(res, `Error proxying ${appName} through Portless: ${error.message}`);
-		}
-	});
-	req.on("error", () => {
-		proxyReq.destroy();
-	});
-	res.on("error", () => {
-		proxyReq.destroy();
-	});
-	res.on("close", () => {
-		if (!proxyReq.destroyed) {
-			proxyReq.destroy();
-		}
-	});
-	req.pipe(proxyReq);
-}
-
-function proxyUpgradeToPortlessApp({
-	targetUrl,
-	externalHost,
-	req,
-	socket,
-	head,
-}: {
-	targetUrl: string;
-	externalHost: string;
-	req: IncomingMessage;
-	socket: Duplex;
-	head: Buffer;
-}): void {
-	socket.on("error", () => {
-		socket.destroy();
-	});
-
-	const target = new URL(req.url ?? "/", targetUrl);
-	const headers = buildBridgeUpgradeRequestHeaders(req.headers, target, {
-		forwardedHost: target.host,
-		forwardedProto: target.protocol.replace(":", ""),
-		forwardedPort: target.port || (target.protocol === "https:" ? "443" : "80"),
-		externalOrigin: buildBridgeExternalOrigin({
-			sourceHeaders: req.headers,
-			externalHost,
-			target,
-		}),
-	});
-	const requestModule = target.protocol === "https:" ? https : http;
-	const proxyReq = requestModule.request({
-		protocol: target.protocol,
-		hostname: target.hostname,
-		port: target.port || (target.protocol === "https:" ? 443 : 80),
-		path: `${target.pathname}${target.search}`,
-		method: req.method,
-		headers,
-	});
-
-	proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
-		proxySocket.on("error", () => {
-			socket.destroy();
-		});
-		let response = `HTTP/1.1 ${proxyRes.statusCode ?? 101} ${proxyRes.statusMessage ?? "Switching Protocols"}\r\n`;
-		for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
-			response += `${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}\r\n`;
-		}
-		response += "\r\n";
-		socket.write(response);
-		if (proxyHead.length) {
-			socket.write(proxyHead);
-		}
-		if (head.length) {
-			proxySocket.write(head);
-		}
-		socket.pipe(proxySocket);
-		proxySocket.pipe(socket);
-	});
-	proxyReq.on("response", (proxyRes) => {
-		writeRawHttpResponse(socket, proxyRes, {
-			...stripHopByHopHeaders(proxyRes.headers),
-			connection: "close",
-		});
-		proxyRes.pipe(socket);
-	});
-	proxyReq.on("error", () => {
-		socket.destroy();
-	});
-	proxyReq.end();
-}
-
-function writeRawHttpResponse(
-	socket: Duplex,
-	proxyRes: IncomingMessage,
-	headers: Record<string, string | string[] | number | undefined>,
-): void {
-	let response = `HTTP/1.1 ${proxyRes.statusCode ?? 502} ${proxyRes.statusMessage ?? "Bad Gateway"}\r\n`;
-	for (const [key, value] of Object.entries(headers)) {
-		if (Array.isArray(value)) {
-			for (const item of value) {
-				response += `${key}: ${item}\r\n`;
-			}
-		} else {
-			response += `${key}: ${value}\r\n`;
-		}
-	}
-	response += "\r\n";
-	socket.write(response);
-}
-
-function safeWriteHead(
-	res: ServerResponse,
-	statusCode: number,
-	headers: Record<string, string | string[] | number | undefined>,
-): void {
-	if (res.destroyed || res.headersSent) {
-		return;
-	}
-	try {
-		res.writeHead(statusCode, headers);
-	} catch {
-		res.destroy();
-	}
-}
-
-function safeEnd(res: ServerResponse, body: string): void {
-	if (res.destroyed || res.writableEnded) {
-		return;
-	}
-	try {
-		res.end(body);
-	} catch {
-		res.destroy();
-	}
+	return startMicrofrontendsProxy({ config, result, localApps, env });
 }
 
 function stopMicrofrontendsProxyRuntime(
-	runtime: MicrofrontendsProxyRuntime | undefined,
+	runtime: ChildProcess | undefined,
 	signal: NodeJS.Signals,
 ): void {
 	if (!runtime) {
 		return;
 	}
-	if (runtime.proxy && !runtime.proxy.killed) {
-		runtime.proxy.kill(signal);
-	}
-	closePortlessAppBridges(runtime.bridges);
-}
-
-function closePortlessAppBridges(bridges: PortlessAppBridge[] = []): void {
-	for (const bridge of bridges) {
-		if (bridge.closed) {
-			continue;
-		}
-		bridge.closed = true;
-		bridge.server.close();
+	if (!runtime.killed) {
+		runtime.kill(signal);
 	}
 }
 
@@ -959,6 +802,31 @@ function prepareDevCommandEnv(commandArgs: string[], env: Env): Env {
 	return nextEnv;
 }
 
+function withExistingMicrofrontendsProxyPort(env: Env): Env {
+	if (env.MFE_LOCAL_PROXY_PORT || !env.VC_MICROFRONTENDS_CONFIG) {
+		return env;
+	}
+
+	try {
+		const config = JSON.parse(
+			fs.readFileSync(env.VC_MICROFRONTENDS_CONFIG, "utf8"),
+		) as MicrofrontendsSourceConfig;
+		const localProxyPort = config.options?.localProxyPort;
+		if (
+			typeof localProxyPort === "number" &&
+			Number.isInteger(localProxyPort) &&
+			localProxyPort > 0 &&
+			localProxyPort <= 65535
+		) {
+			return { ...env, MFE_LOCAL_PROXY_PORT: String(localProxyPort) };
+		}
+	} catch {
+		// Standalone app runs may not have a parent-generated config yet.
+	}
+
+	return env;
+}
+
 function spawnWithFallback(
 	commands: SpawnFallbackCommand[],
 	options: SpawnOptions,
@@ -1015,6 +883,7 @@ function printHelp() {
   portless-mfe turbo [--name <name>] [--local-app <name>] run dev [...turbo args]
   portless-mfe dev [--local-app <name>] -- <command> [...args]
   portless-mfe run [--name <name>] [--local-app <name>] -- <command> [...args]
+  portless-mfe app -- <command> [...args]
   portless-mfe proxy [--local-app <name>]
   portless-mfe url [--app <name>] [--path <path>] [--json]
   portless-mfe identity [--path <path>] [--app-name <name>] [--json]
