@@ -22,7 +22,7 @@ import {
 	selectLocalAppNames,
 } from "../src/index.js";
 import { withPortlessMfeDev } from "../src/next.js";
-import { resolveRelatedProjectUrl } from "../src/related-projects.js";
+import { relatedProjects, resolveProjectUrl, withProject } from "../src/projects.js";
 import {
 	prepareDevCommandEnv,
 	promoteDevProxyAppCommandEnv,
@@ -285,10 +285,10 @@ test("package export map supports intended ESM imports", () => {
 		`
 			const publicApi = await import("@lightfastai/dev-proxy");
 			const nextApi = await import("@lightfastai/dev-proxy/next");
-			const relatedProjectsApi = await import("@lightfastai/dev-proxy/related-projects");
+			const projectApi = await import("@lightfastai/dev-proxy/projects");
 			if (typeof publicApi.resolvePortlessMfeRuntime !== "function") throw new Error("missing public API");
 			if (typeof nextApi.withPortlessMfeDev !== "function") throw new Error("missing next API");
-			if (typeof relatedProjectsApi.resolveRelatedProjectUrl !== "function") throw new Error("missing related-projects API");
+			if (typeof projectApi.resolveProjectUrl !== "function") throw new Error("missing projects API");
 		`,
 	]);
 
@@ -307,12 +307,12 @@ test("package export map supports CommonJS require for Next helpers", () => {
 	assertNodeOk(result);
 });
 
-test("package export map keeps related-projects unsupported for CommonJS require", () => {
+test("package export map keeps projects unsupported for CommonJS require", () => {
 	const result = runNode([
 		"--eval",
 		`
 			try {
-				require("@lightfastai/dev-proxy/related-projects");
+				require("@lightfastai/dev-proxy/projects");
 				throw new Error("expected CommonJS require to fail");
 			} catch (error) {
 				if (error && error.code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
@@ -688,9 +688,9 @@ test("resolveRuntimeIdentity is Electron-agnostic and suffixes linked worktrees"
 	assert.equal(linked.worktreePrefix, "fix-ui");
 });
 
-test("resolveRelatedProjectUrl resolves development URLs through Portless microfrontends", () => {
+test("resolveProjectUrl resolves development URLs through Portless microfrontends", () => {
 	const root = createFixtureWorkspace();
-	const localUrl = resolveRelatedProjectUrl("platform", {
+	const localUrl = resolveProjectUrl("platform", {
 		cwd: root,
 		env: {
 			NODE_ENV: "development",
@@ -704,11 +704,11 @@ test("resolveRelatedProjectUrl resolves development URLs through Portless microf
 	assert.equal(localUrl, "http://fix-ui.platform.mfe.localhost:1355/");
 });
 
-test("resolveRelatedProjectUrl resolves production fallbacks from microfrontends config", () => {
+test("resolveProjectUrl resolves production fallbacks from microfrontends config", () => {
 	const root = createLightfastFixtureWorkspace();
 
 	assert.equal(
-		resolveRelatedProjectUrl("lightfast-app", {
+		resolveProjectUrl("lightfast-app", {
 			cwd: root,
 			env: {
 				NODE_ENV: "production",
@@ -717,7 +717,7 @@ test("resolveRelatedProjectUrl resolves production fallbacks from microfrontends
 		"https://lightfast-app.vercel.app",
 	);
 	assert.equal(
-		resolveRelatedProjectUrl("lightfast-www", {
+		resolveProjectUrl("lightfast-www", {
 			path: "/docs",
 			cwd: root,
 			env: {
@@ -728,7 +728,7 @@ test("resolveRelatedProjectUrl resolves production fallbacks from microfrontends
 	);
 });
 
-test("resolveRelatedProjectUrl normalizes localhost and full fallback URLs", () => {
+test("resolveProjectUrl normalizes localhost and full fallback URLs", () => {
 	const root = createFixtureWorkspace();
 	const sourceConfig = {
 		applications: {
@@ -746,7 +746,7 @@ test("resolveRelatedProjectUrl normalizes localhost and full fallback URLs", () 
 	};
 
 	assert.equal(
-		resolveRelatedProjectUrl("app", {
+		resolveProjectUrl("app", {
 			cwd: root,
 			env: {
 				NODE_ENV: "production",
@@ -756,7 +756,7 @@ test("resolveRelatedProjectUrl normalizes localhost and full fallback URLs", () 
 		"http://app.localhost",
 	);
 	assert.equal(
-		resolveRelatedProjectUrl("api", {
+		resolveProjectUrl("api", {
 			path: "/ping",
 			cwd: root,
 			env: {
@@ -768,12 +768,12 @@ test("resolveRelatedProjectUrl normalizes localhost and full fallback URLs", () 
 	);
 });
 
-test("resolveRelatedProjectUrl reports unknown microfrontend apps", () => {
+test("resolveProjectUrl reports unknown microfrontend apps", () => {
 	const root = createFixtureWorkspace();
 
 	assert.throws(
 		() =>
-			resolveRelatedProjectUrl("missing", {
+			resolveProjectUrl("missing", {
 				cwd: root,
 				env: {
 					NODE_ENV: "production",
@@ -783,12 +783,12 @@ test("resolveRelatedProjectUrl reports unknown microfrontend apps", () => {
 	);
 });
 
-test("resolveRelatedProjectUrl requires microfrontends fallback outside development", () => {
+test("resolveProjectUrl requires microfrontends fallback outside development", () => {
 	const root = createFixtureWorkspace();
 
 	assert.throws(
 		() =>
-			resolveRelatedProjectUrl("app", {
+			resolveProjectUrl("app", {
 				cwd: root,
 				env: {
 					NODE_ENV: "production",
@@ -800,6 +800,61 @@ test("resolveRelatedProjectUrl requires microfrontends fallback outside developm
 				},
 			}),
 		/App "app" must define development\.fallback in microfrontends config/,
+	);
+});
+
+test("withProject resolves Vercel related projects without external package dependency", () => {
+	const env = {
+		VERCEL_ENV: "preview",
+		VERCEL_RELATED_PROJECTS: JSON.stringify([
+			{
+				project: { name: "app" },
+				preview: { branch: "app-git-preview.vercel.app" },
+				production: { alias: "app.example.com", url: "app-prod.vercel.app" },
+			},
+			{
+				project: { name: "www" },
+				preview: { customEnvironment: "www-custom.vercel.app", branch: "www-git.vercel.app" },
+				production: { url: "www-prod.vercel.app" },
+			},
+		]),
+	};
+
+	assert.equal(
+		withProject({ projectName: "app", defaultHost: "http://localhost:3000", env }),
+		"https://app-git-preview.vercel.app",
+	);
+	assert.equal(
+		withProject({ projectName: "www", defaultHost: "http://localhost:3001", env }),
+		"https://www-custom.vercel.app",
+	);
+	assert.equal(
+		withProject({
+			projectName: "app",
+			defaultHost: "http://localhost:3000",
+			env: { ...env, VERCEL_ENV: "production" },
+		}),
+		"https://app.example.com",
+	);
+	assert.equal(
+		withProject({ projectName: "missing", defaultHost: "http://localhost:3002", env }),
+		"http://localhost:3002",
+	);
+});
+
+test("relatedProjects reports missing or invalid Vercel related project env", () => {
+	assert.deepEqual(relatedProjects({ env: {}, noThrow: true }), []);
+	assert.throws(
+		() => relatedProjects({ env: {} }),
+		/Missing required environment variable: VERCEL_RELATED_PROJECTS/,
+	);
+	assert.deepEqual(
+		relatedProjects({ env: { VERCEL_RELATED_PROJECTS: "not-json" }, noThrow: true }),
+		[],
+	);
+	assert.throws(
+		() => relatedProjects({ env: { VERCEL_RELATED_PROJECTS: "not-json" } }),
+		/Invalid JSON in VERCEL_RELATED_PROJECTS/,
 	);
 });
 

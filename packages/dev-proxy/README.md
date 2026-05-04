@@ -8,7 +8,7 @@ This package does not ship a CLI. Use `@lightfastai/dev-cli` for the `lightfast-
 
 Use `@lightfastai/dev-proxy/next` from `next.config.ts`. It is safe for Next config loading and supports both ESM `import` and CommonJS `require`.
 
-Use `@lightfastai/dev-proxy/related-projects` from ESM app or server runtime modules that integrate with `@vercel/related-projects`.
+Use `@lightfastai/dev-proxy/projects` from ESM app or server runtime modules that need related deployment or local Portless application URLs.
 
 The root `@lightfastai/dev-proxy` entrypoint exports Portless, Microfrontends, and process runtime helpers for ESM consumers.
 
@@ -55,13 +55,15 @@ import {
 } from "@lightfastai/dev-proxy/next";
 ```
 
-Related-project URL helper:
+Project URL helpers:
 
 ```ts
-import { resolveRelatedProjectUrl } from "@lightfastai/dev-proxy/related-projects";
+import { resolveProjectUrl, withProject } from "@lightfastai/dev-proxy/projects";
 ```
 
-`resolveRelatedProjectUrl` reads the configured Vercel Microfrontends file and resolves the requested application by name. In development it returns the local Portless application URL. Outside development it returns the application's `development.fallback`, normalized to a full URL.
+`resolveProjectUrl` reads the configured Vercel Microfrontends file and resolves the requested application by name. In development it returns the local Portless application URL. Outside development it returns the application's `development.fallback`, normalized to a full URL.
+
+`withProject` is the small Vercel deployment-neighbor resolver. It reads `VERCEL_RELATED_PROJECTS` when Vercel provides it and otherwise returns the supplied default host.
 
 ## Publishing
 

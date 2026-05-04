@@ -16,7 +16,32 @@ import type {
 	PortlessMfeConfig,
 } from "./index.js";
 
-export interface ResolveRelatedProjectUrlOptions {
+export interface RelatedProject {
+	project: {
+		name: string;
+	};
+	preview: {
+		branch?: string;
+		customEnvironment?: string;
+	};
+	production: {
+		alias?: string;
+		url?: string;
+	};
+}
+
+export interface RelatedProjectsOptions {
+	env?: Env;
+	noThrow?: boolean;
+}
+
+export interface WithProjectOptions {
+	projectName: string;
+	defaultHost: string;
+	env?: Env;
+}
+
+export interface ResolveProjectUrlOptions {
 	path?: string;
 	cwd?: string;
 	env?: Env;
@@ -27,7 +52,60 @@ export interface ResolveRelatedProjectUrlOptions {
 	detectWorktreePrefix?: DetectWorktreePrefix;
 }
 
-export function resolveRelatedProjectUrl(
+export function relatedProjects({
+	env = process.env,
+	noThrow = false,
+}: RelatedProjectsOptions = {}): RelatedProject[] {
+	const value = env.VERCEL_RELATED_PROJECTS;
+	if (!value) {
+		if (noThrow) {
+			return [];
+		}
+		throw new Error("Missing required environment variable: VERCEL_RELATED_PROJECTS");
+	}
+
+	try {
+		return JSON.parse(value) as RelatedProject[];
+	} catch (error) {
+		if (noThrow) {
+			return [];
+		}
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Invalid JSON in VERCEL_RELATED_PROJECTS: ${message}`);
+	}
+}
+
+export function withProject({
+	projectName,
+	defaultHost,
+	env = process.env,
+}: WithProjectOptions): string {
+	const projects = relatedProjects({ env, noThrow: true });
+	const project = projects.find((candidate) => candidate.project.name === projectName);
+	if (!project) {
+		return defaultHost;
+	}
+
+	if (env.VERCEL_ENV === "preview") {
+		const previewHost = project.preview.customEnvironment ?? project.preview.branch;
+		if (previewHost) {
+			return `https://${previewHost}`;
+		}
+	}
+
+	if (env.VERCEL_ENV === "production") {
+		if (project.production.alias) {
+			return `https://${project.production.alias}`;
+		}
+		if (project.production.url) {
+			return `https://${project.production.url}`;
+		}
+	}
+
+	return defaultHost;
+}
+
+export function resolveProjectUrl(
 	projectName: string,
 	{
 		path: targetPath,
@@ -38,10 +116,10 @@ export function resolveRelatedProjectUrl(
 		sourceConfig,
 		getPortlessUrl,
 		detectWorktreePrefix,
-	}: ResolveRelatedProjectUrlOptions = {},
+	}: ResolveProjectUrlOptions = {},
 ): string {
 	if (!projectName) {
-		throw new Error("resolveRelatedProjectUrl requires a project name.");
+		throw new Error("resolveProjectUrl requires a project name.");
 	}
 
 	const normalized = resolveConfig({ cwd, config, configPath });

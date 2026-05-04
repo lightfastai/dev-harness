@@ -1,6 +1,6 @@
 {
   "name": "@lightfastai/dev-proxy",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "Local development proxy helpers for Lightfast projects using Portless and Vercel Microfrontends.",
   "license": "UNLICENSED",
   "type": "module",
@@ -29,9 +29,9 @@
       "import": "./dist/next.js",
       "require": "./dist/next.cjs"
     },
-    "./related-projects": {
-      "types": "./dist/related-projects.d.ts",
-      "import": "./dist/related-projects.js"
+    "./projects": {
+      "types": "./dist/projects.d.ts",
+      "import": "./dist/projects.js"
     },
     "./package.json": "./package.json",
     "./schema/config.schema.json": "./schema/config.schema.json"

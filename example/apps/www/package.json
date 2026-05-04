@@ -12,7 +12,6 @@
     "@lightfastai/dev-core": "workspace:*",
     "@lightfastai/dev-proxy": "workspace:*",
     "@vercel/microfrontends": "catalog:",
-    "@vercel/related-projects": "catalog:",
     "inngest": "catalog:",
     "next": "catalog:",
     "react": "catalog:",

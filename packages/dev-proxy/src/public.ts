@@ -7,6 +7,7 @@ export {
 	resolveRuntimeIdentity,
 	resolveTargetUrl,
 } from "./index.js";
+export { relatedProjects, resolveProjectUrl, withProject } from "./projects.js";
 export {
 	formatDevProxyRuntimeSummary,
 	isTurboRunCommand,
@@ -45,6 +46,12 @@ export type {
 	VercelMicrofrontendsDevConfigResult,
 	WorkspacePackage,
 } from "./index.js";
+export type {
+	RelatedProject,
+	RelatedProjectsOptions,
+	ResolveProjectUrlOptions,
+	WithProjectOptions,
+} from "./projects.js";
 export type {
 	DevProxyAppCommandRuntime,
 	DevProxyCommandOptions,

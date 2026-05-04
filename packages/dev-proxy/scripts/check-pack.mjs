@@ -41,8 +41,8 @@ const requiredFiles = [
 	"dist/next.js",
 	"dist/next.cjs",
 	"dist/next.d.ts",
-	"dist/related-projects.js",
-	"dist/related-projects.d.ts",
+	"dist/projects.js",
+	"dist/projects.d.ts",
 	"schema/config.schema.json",
 	"package.json",
 ];
