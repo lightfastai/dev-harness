@@ -307,19 +307,13 @@ test("package export map supports CommonJS require for Next helpers", () => {
 	assertNodeOk(result);
 });
 
-test("package export map keeps projects unsupported for CommonJS require", () => {
+test("package export map supports CommonJS require for project helpers", () => {
 	const result = runNode([
 		"--eval",
 		`
-			try {
-				require("@lightfastai/dev-proxy/projects");
-				throw new Error("expected CommonJS require to fail");
-			} catch (error) {
-				if (error && error.code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
-					process.exit(0);
-				}
-				throw error;
-			}
+			const projectApi = require("@lightfastai/dev-proxy/projects");
+			if (typeof projectApi.withProject !== "function") throw new Error("missing withProject API");
+			if (typeof projectApi.resolveProjectUrl !== "function") throw new Error("missing resolveProjectUrl API");
 		`,
 	]);
 
