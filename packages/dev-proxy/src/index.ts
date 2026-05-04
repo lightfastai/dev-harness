@@ -653,7 +653,7 @@ export async function createVercelMicrofrontendsDevConfig({
 					...appConfig,
 					development: {
 						...(appConfig.development ?? {}),
-						local: appLocalUrls[appName],
+						local: appPorts[appName],
 					},
 				};
 				return [

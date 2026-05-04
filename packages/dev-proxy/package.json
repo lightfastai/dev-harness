@@ -1,6 +1,6 @@
 {
   "name": "@lightfastai/dev-proxy",
-  "version": "0.1.18",
+  "version": "0.1.22",
   "description": "Local development proxy helpers for Lightfast projects using Portless and Vercel Microfrontends.",
   "license": "UNLICENSED",
   "type": "module",

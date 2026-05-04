@@ -31,6 +31,7 @@ export interface ProcessExitResult {
 export interface DevProxyProcessRuntime {
 	child: ChildProcess;
 	proxy?: ChildProcess;
+	auxiliaries?: ChildProcess[];
 	stop(signal?: NodeJS.Signals): void;
 	exit: Promise<ProcessExitResult>;
 }
@@ -73,8 +74,7 @@ export async function startDevProxyTurboCommand({
 	localApps = [],
 	commandArgs,
 	stdio = "inherit",
-	runtimeCommand = ["lightfast-dev", "proxy", "dev"],
-}: DevProxyCommandOptions): Promise<DevProxyProcessRuntime> {
+}: DevProxyCommandOptions): Promise<DevProxyDevCommandRuntime> {
 	if (!commandArgs.length) {
 		throw new Error("Dev proxy turbo command requires command arguments.");
 	}
@@ -88,26 +88,78 @@ export async function startDevProxyTurboCommand({
 				...config.portless,
 				name: portlessName,
 			},
-		},
-		cwd: config.root,
-		env,
-	});
-	const child = await spawnWithFallback(
-		buildPortlessRunCommands({
-			portlessName,
-			runtimeCommand,
-			configPath,
-			localApps,
-			commandArgs: normalizeTurboCommandArgs(commandArgs),
-		}),
-		{
+			},
 			cwd: config.root,
-			env: portlessEnv,
-			stdio,
+			env,
+		});
+	const result = await createVercelMicrofrontendsDevConfig({
+		cwd: config.root,
+		config: {
+			...config,
+			portless: {
+				...config.portless,
+				name: portlessName,
+			},
 		},
-	);
+		env: portlessEnv,
+	});
+	const normalizedCommandArgs = disableTurboFrameworkInference(normalizeTurboCommandArgs(commandArgs));
+	const resolvedLocalApps = inferLocalAppNames({
+		applications: result.sourceConfig.applications,
+		requestedApps: localApps,
+		commandArgs: normalizedCommandArgs,
+		appDirs: result.appDirs,
+		cwd,
+		root: config.root,
+		env: portlessEnv,
+	});
+	const proxyEnv = createVercelMicrofrontendsDevEnv({
+		result,
+		localApps: resolvedLocalApps,
+		env: portlessEnv,
+	});
+	let proxy: ChildProcess | undefined;
+	let route: ChildProcess | undefined;
+	try {
+		proxy = await startMicrofrontendsProxy({
+			config,
+			result,
+			localApps: resolvedLocalApps,
+			env: proxyEnv,
+			stdio,
+		});
+		route = await spawnWithFallback(
+			buildPortlessRouteCommands({
+				portlessName,
+				appPort: result.localProxyPort,
+			}),
+			{
+				cwd: config.root,
+				env: portlessEnv,
+				stdio,
+			},
+		);
+	} catch (error) {
+		if (proxy && !proxy.killed) {
+			proxy.kill("SIGTERM");
+		}
+		if (route && !route.killed) {
+			route.kill("SIGTERM");
+		}
+		throw error;
+	}
+	const child = spawn(normalizedCommandArgs[0], normalizedCommandArgs.slice(1), {
+		cwd: config.root,
+		env: prepareDevCommandEnv(normalizedCommandArgs, proxyEnv),
+		stdio,
+	});
 
-	return createSingleChildRuntime(child);
+	return {
+		...createLinkedRuntime(child, [proxy, route]),
+		configRoot: config.root,
+		result,
+		localApps: resolvedLocalApps,
+	};
 }
 
 export async function startDevProxyRunCommand({
@@ -199,7 +251,6 @@ export async function startDevProxyDevCommand({
 		result,
 		localApps,
 		env: childEnv,
-		startProxy: !isTurboRunCommand(commandArgs),
 		stdio,
 	});
 	const devCommandArgs = disableTurboFrameworkInference(addTurboDevEnvMode(commandArgs));
@@ -273,7 +324,7 @@ export async function startDevProxyAppCommand({
 	}
 
 	const config = await loadPortlessMfeConfig({ cwd, configPath });
-	const appEnv = withExistingMicrofrontendsProxyPort(env);
+	const appEnv = withExistingMicrofrontendsProxyPort(promoteDevProxyAppCommandEnv(env));
 	const result = await createVercelMicrofrontendsDevConfig({
 		cwd: config.root,
 		config,
@@ -445,6 +496,29 @@ function buildPortlessAppCommands({
 	];
 }
 
+function buildPortlessRouteCommands({
+	portlessName,
+	appPort,
+}: {
+	portlessName: string;
+	appPort: number;
+}): SpawnFallbackCommand[] {
+	const args = [
+		"run",
+		"--name",
+		portlessName,
+		"--app-port",
+		String(appPort),
+		process.execPath,
+		"-e",
+		"setInterval(() => {}, 1 << 30)",
+	];
+	return [
+		["portless", args],
+		["pnpm", ["exec", "portless", ...args]],
+	];
+}
+
 function buildMicrofrontendsProxyArgs(
 	result: VercelMicrofrontendsDevConfigResult,
 	localApps: string[],
@@ -550,7 +624,7 @@ function disableTurboFrameworkInference(commandArgs: string[]): string[] {
 	];
 }
 
-function prepareDevCommandEnv(commandArgs: string[], env: Env): Env {
+export function prepareDevCommandEnv(commandArgs: string[], env: Env): Env {
 	if (!isTurboRunCommand(commandArgs)) {
 		return env;
 	}
@@ -559,7 +633,39 @@ function prepareDevCommandEnv(commandArgs: string[], env: Env): Env {
 	delete nextEnv.PORT;
 	delete nextEnv.HOST;
 	delete nextEnv.PORTLESS_URL;
-	delete nextEnv.MFE_LOCAL_PROXY_PORT;
+	const turboEnv = hideMicrofrontendsEnvFromTurbo(nextEnv);
+	turboEnv.VC_MICROFRONTENDS_CONFIG_FILE_NAME = TURBO_MICROFRONTENDS_CONFIG_DECOY;
+	return turboEnv;
+}
+
+const TURBO_MICROFRONTENDS_CONFIG_DECOY = "lightfast-dev-no-turbo-mfe.json";
+const TURBO_HIDDEN_ENV_KEYS = {
+	MFE_LOCAL_PROXY_PORT: "LIGHTFAST_DEV_PROXY_LOCAL_PROXY_PORT",
+	MFE_DISABLE_LOCAL_PROXY_REWRITE: "LIGHTFAST_DEV_PROXY_DISABLE_PROXY_REWRITE",
+	PORTLESS_MFE_LOCAL_APPS: "LIGHTFAST_DEV_PROXY_LOCAL_APPS",
+	VC_MICROFRONTENDS_CONFIG: "LIGHTFAST_DEV_PROXY_CONFIG_PATH",
+	VC_MICROFRONTENDS_CONFIG_FILE_NAME: "LIGHTFAST_DEV_PROXY_CONFIG_FILE_NAME",
+} as const;
+
+export function hideMicrofrontendsEnvFromTurbo(env: Env): Env {
+	const nextEnv = { ...env };
+	for (const [key, hiddenKey] of Object.entries(TURBO_HIDDEN_ENV_KEYS)) {
+		const value = nextEnv[key];
+		if (value !== undefined) {
+			nextEnv[hiddenKey] = value;
+			delete nextEnv[key];
+		}
+	}
+	return nextEnv;
+}
+
+export function promoteDevProxyAppCommandEnv(env: Env): Env {
+	const nextEnv = { ...env };
+	for (const [key, hiddenKey] of Object.entries(TURBO_HIDDEN_ENV_KEYS)) {
+		if (nextEnv[hiddenKey] !== undefined) {
+			nextEnv[key] = nextEnv[hiddenKey];
+		}
+	}
 	return nextEnv;
 }
 
@@ -644,8 +750,12 @@ function createSingleChildRuntime(child: ChildProcess): DevProxyProcessRuntime {
 
 function createLinkedRuntime(
 	child: ChildProcess,
-	proxy: ChildProcess | undefined,
+	auxiliary: ChildProcess | undefined | Array<ChildProcess | undefined>,
 ): DevProxyProcessRuntime {
+	const auxiliaries = (Array.isArray(auxiliary) ? auxiliary : [auxiliary]).filter(
+		(value): value is ChildProcess => Boolean(value),
+	);
+	const proxy = auxiliaries[0];
 	let settled = false;
 	let shuttingDown = false;
 	let resolveExit!: (result: ProcessExitResult) => void;
@@ -659,14 +769,16 @@ function createLinkedRuntime(
 		settled = true;
 		resolveExit(toExitResult(code, signal));
 	};
-	const stopProxy = (signal: NodeJS.Signals) => {
-		if (proxy && !proxy.killed) {
-			proxy.kill(signal);
+	const stopAuxiliaries = (signal: NodeJS.Signals) => {
+		for (const process of auxiliaries) {
+			if (!process.killed) {
+				process.kill(signal);
+			}
 		}
 	};
 
-	if (proxy) {
-		proxy.on("exit", (code, signal) => {
+	for (const process of auxiliaries) {
+		process.on("exit", (code, signal) => {
 			if (shuttingDown) {
 				return;
 			}
@@ -681,19 +793,20 @@ function createLinkedRuntime(
 
 	child.on("exit", (code, signal) => {
 		shuttingDown = true;
-		stopProxy("SIGTERM");
+		stopAuxiliaries("SIGTERM");
 		finish(code, signal);
 	});
 
 	return {
 		child,
 		proxy,
+		auxiliaries,
 		stop(signal = "SIGTERM") {
 			shuttingDown = true;
 			if (!child.killed) {
 				child.kill(signal);
 			}
-			stopProxy(signal);
+			stopAuxiliaries(signal);
 		},
 		exit,
 	};

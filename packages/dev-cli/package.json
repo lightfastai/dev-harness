@@ -1,6 +1,6 @@
 {
   "name": "@lightfastai/dev-cli",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Thin CLI harness for Lightfast local development APIs.",
   "license": "UNLICENSED",
   "type": "module",
@@ -43,8 +43,8 @@
   },
   "dependencies": {
     "@lightfastai/dev-core": "workspace:^0.1.1",
-    "@lightfastai/dev-proxy": "workspace:^0.1.18",
-    "@lightfastai/dev-services": "workspace:^0.1.5"
+    "@lightfastai/dev-proxy": "workspace:^0.1.19",
+    "@lightfastai/dev-services": "workspace:^0.1.6"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

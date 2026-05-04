@@ -23,6 +23,10 @@ import {
 } from "../src/index.js";
 import { withPortlessMfeDev } from "../src/next.js";
 import { resolveRelatedProjectUrl } from "../src/related-projects.js";
+import {
+	prepareDevCommandEnv,
+	promoteDevProxyAppCommandEnv,
+} from "../src/runtime.js";
 import type {
 	MicrofrontendsSourceConfig,
 	VercelMicrofrontendsDevConfigResult,
@@ -387,25 +391,25 @@ test("createVercelMicrofrontendsDevConfig infers arbitrary app directories", asy
 		applications: {
 			app: {
 				development: {
-					local: string;
+					local: number;
 				};
 			};
 			platform: {
 				development: {
-					local: string;
+					local: number;
 				};
 			};
 			www: {
 				development: {
-					local: string;
+					local: number;
 				};
 				routing: Array<{ paths: string[] }>;
 			};
 		};
 	};
-	assert.equal(generatedConfig.applications.app.development.local, result.appLocalUrls.app);
-	assert.equal(generatedConfig.applications.platform.development.local, result.appLocalUrls.platform);
-	assert.equal(generatedConfig.applications.www.development.local, result.appLocalUrls.www);
+	assert.equal(generatedConfig.applications.app.development.local, result.appPorts.app);
+	assert.equal(generatedConfig.applications.platform.development.local, result.appPorts.platform);
+	assert.equal(generatedConfig.applications.www.development.local, result.appPorts.www);
 	assertValidMicrofrontendsDevConfig(result.generatedConfig);
 	assert.equal(
 		generatedConfig.applications.www.routing[0].paths.includes("/vc-ap-4eae35/:path*"),
@@ -476,7 +480,7 @@ test("resolvePortlessApplicationUrl supports Lightfast-style package names and o
 	);
 });
 
-test("createVercelMicrofrontendsDevConfig uses app-host local URLs for Lightfast hosts", async () => {
+test("createVercelMicrofrontendsDevConfig uses numeric local app ports for Lightfast hosts", async () => {
 	const root = createLightfastFixtureWorkspace();
 	const baseConfig = {
 		root,
@@ -523,7 +527,7 @@ test("createVercelMicrofrontendsDevConfig uses app-host local URLs for Lightfast
 	assert.equal(main.appPorts["lightfast-app"], generateMicrofrontendsPort("lightfast-app"));
 	assert.equal(
 		getGeneratedLocal(main, "lightfast-app"),
-		`http://app.lightfast.localhost:${generateMicrofrontendsPort("lightfast-app")}`,
+		generateMicrofrontendsPort("lightfast-app"),
 	);
 	assert.equal("appBridgePorts" in main, false);
 	assertValidMicrofrontendsDevConfig(main.generatedConfig);
@@ -542,7 +546,7 @@ test("createVercelMicrofrontendsDevConfig uses app-host local URLs for Lightfast
 	assert.notEqual(worktree.appPorts["lightfast-app"], main.appPorts["lightfast-app"]);
 	assert.equal(
 		getGeneratedLocal(worktree, "lightfast-app"),
-		`http://fix-ui.app.lightfast.localhost:${worktree.appPorts["lightfast-app"]}`,
+		worktree.appPorts["lightfast-app"],
 	);
 	assert.equal("appBridgePorts" in worktree, false);
 	assertValidMicrofrontendsDevConfig(worktree.generatedConfig);
@@ -554,7 +558,7 @@ test("createVercelMicrofrontendsDevConfig uses app-host local URLs for Lightfast
 	);
 	assert.equal(
 		getGeneratedLocal(secondWorktree, "lightfast-app"),
-		`http://fix-clerk.app.lightfast.localhost:${secondWorktree.appPorts["lightfast-app"]}`,
+		secondWorktree.appPorts["lightfast-app"],
 	);
 	assert.notEqual(secondWorktree.appPorts["lightfast-app"], main.appPorts["lightfast-app"]);
 	assert.notEqual(secondWorktree.appPorts["lightfast-app"], worktree.appPorts["lightfast-app"]);
@@ -617,6 +621,54 @@ test("dev-proxy turbo helpers inject dev env and Turbo loose env mode", () => {
 		addTurboDevEnvMode(["turbo", "run", "--env-mode=strict", "dev"]),
 		["turbo", "run", "--env-mode=strict", "dev"],
 	);
+});
+
+test("dev-proxy hides MFE config from Turbo and restores it for app commands", () => {
+	const result = {
+		localProxyPort: 9123,
+		generatedConfigPath: "/repo/apps/app/microfrontends.local.json",
+		runtimeConfigFilename: "microfrontends.local.json",
+	};
+	const env = createVercelMicrofrontendsDevEnv({
+		result,
+		localApps: ["lightfast-app", "lightfast-www"],
+		env: {
+			HOST: "0.0.0.0",
+			PORT: "443",
+			PORTLESS_PORT: "1455",
+			PORTLESS_URL: "http://lightfast.localhost:1455",
+		},
+	});
+
+	const turboEnv = prepareDevCommandEnv(["turbo", "run", "dev"], env);
+
+	assert.equal(turboEnv.HOST, undefined);
+	assert.equal(turboEnv.PORT, undefined);
+	assert.equal(turboEnv.PORTLESS_URL, undefined);
+	assert.equal(turboEnv.PORTLESS_PORT, "1455");
+	assert.equal(turboEnv.MFE_LOCAL_PROXY_PORT, undefined);
+	assert.equal(turboEnv.VC_MICROFRONTENDS_CONFIG, undefined);
+	assert.equal(turboEnv.VC_MICROFRONTENDS_CONFIG_FILE_NAME, "lightfast-dev-no-turbo-mfe.json");
+	assert.equal(turboEnv.LIGHTFAST_DEV_PROXY_LOCAL_PROXY_PORT, "9123");
+	assert.equal(turboEnv.LIGHTFAST_DEV_PROXY_DISABLE_PROXY_REWRITE, "1");
+	assert.equal(turboEnv.LIGHTFAST_DEV_PROXY_LOCAL_APPS, "lightfast-app,lightfast-www");
+	assert.equal(turboEnv.LIGHTFAST_DEV_PROXY_CONFIG_PATH, "/repo/apps/app/microfrontends.local.json");
+	assert.equal(turboEnv.LIGHTFAST_DEV_PROXY_CONFIG_FILE_NAME, "microfrontends.local.json");
+
+	const appEnv = promoteDevProxyAppCommandEnv(turboEnv);
+	assert.equal(appEnv.MFE_LOCAL_PROXY_PORT, "9123");
+	assert.equal(appEnv.MFE_DISABLE_LOCAL_PROXY_REWRITE, "1");
+	assert.equal(appEnv.PORTLESS_MFE_LOCAL_APPS, "lightfast-app,lightfast-www");
+	assert.equal(appEnv.VC_MICROFRONTENDS_CONFIG, "/repo/apps/app/microfrontends.local.json");
+	assert.equal(appEnv.VC_MICROFRONTENDS_CONFIG_FILE_NAME, "microfrontends.local.json");
+
+	const explicitAppEnv = promoteDevProxyAppCommandEnv({
+		...turboEnv,
+		VC_MICROFRONTENDS_CONFIG: "/repo/custom.json",
+		VC_MICROFRONTENDS_CONFIG_FILE_NAME: "custom.json",
+	});
+	assert.equal(explicitAppEnv.VC_MICROFRONTENDS_CONFIG, "/repo/apps/app/microfrontends.local.json");
+	assert.equal(explicitAppEnv.VC_MICROFRONTENDS_CONFIG_FILE_NAME, "microfrontends.local.json");
 });
 
 test("resolveRuntimeIdentity is Electron-agnostic and suffixes linked worktrees", () => {
@@ -850,10 +902,9 @@ function createLightfastFixtureWorkspace() {
 function getGeneratedLocal(
 	result: VercelMicrofrontendsDevConfigResult,
 	appName: string,
-): string | undefined {
+): unknown {
 	const appConfig = result.generatedConfig.applications?.[appName];
-	const local = appConfig?.development?.local;
-	return typeof local === "string" ? local : undefined;
+	return appConfig?.development?.local;
 }
 
 function expectedAppPorts(
@@ -884,10 +935,9 @@ function assertValidMicrofrontendsDevConfig(
 		);
 		assert.equal(
 			typeof appConfig.development?.local,
-			"string",
-			`${appName} must use a URL development.local`,
+			"number",
+			`${appName} must use a numeric development.local app port`,
 		);
-		assert.doesNotThrow(() => new URL(appConfig.development?.local as string));
 	}
 }
 
