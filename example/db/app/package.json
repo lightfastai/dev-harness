@@ -1,0 +1,37 @@
+{
+  "name": "@example/db-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./client": {
+      "types": "./src/client.ts",
+      "default": "./src/client.ts"
+    },
+    "./schema": {
+      "types": "./src/schema/index.ts",
+      "default": "./src/schema/index.ts"
+    },
+    "./migrations": "./src/migrations/meta/_journal.json"
+  },
+  "scripts": {
+    "db:generate": "node ./scripts/with-dev-postgres.mjs drizzle-kit generate --config=./src/drizzle.config.ts",
+    "db:migrate": "node ./scripts/with-dev-postgres.mjs drizzle-kit migrate --config=./src/drizzle.config.ts",
+    "db:studio": "node ./scripts/with-dev-postgres.mjs drizzle-kit studio --config=./src/drizzle.config.ts --host 127.0.0.1 --port 4983",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@example/vendor-db": "workspace:*",
+    "@lightfastai/dev-services": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "drizzle-kit": "catalog:",
+    "typescript": "catalog:"
+  }
+}

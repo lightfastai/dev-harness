@@ -2,11 +2,13 @@
   "$schema": "https://openapi.vercel.sh/microfrontends.json",
   "applications": {
     "app": {
+      "packageName": "@example/app",
       "development": {
         "fallback": "app.localhost"
       }
     },
     "www": {
+      "packageName": "@example/www",
       "development": {
         "fallback": "www.localhost"
       },

@@ -1,0 +1,26 @@
+{
+  "name": "@example/www",
+  "private": true,
+  "portless": "www.mfe",
+  "scripts": {
+    "dev": "portless run next dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@example/db-app": "workspace:*",
+    "@lightfastai/dev-core": "workspace:*",
+    "@lightfastai/related-projects": "workspace:*",
+    "@vercel/microfrontends": "catalog:",
+    "@vercel/related-projects": "catalog:",
+    "inngest": "catalog:",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:"
+  }
+}

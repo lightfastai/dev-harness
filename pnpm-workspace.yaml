@@ -1,6 +1,29 @@
 packages:
-  - "apps/*"
+  - "example/apps/*"
+  - "example/db/*"
+  - "example/vendor/*"
+  - "example/packages/*"
   - "packages/*"
+
+catalog:
+  "@types/node": "^22.0.0"
+  "@types/react": "^19.0.0"
+  "@types/react-dom": "^19.0.0"
+  "@upstash/redis": "^1.37.0"
+  "@vercel/microfrontends": "2.3.2"
+  "@vercel/related-projects": "1.1.0"
+  "drizzle-kit": "^0.31.10"
+  "drizzle-orm": "^0.45.2"
+  "electron": "^33.0.0"
+  "inngest": "4.2.6"
+  "next": "^15.0.0"
+  "portless": "^0.12.0"
+  "postgres": "^3.4.9"
+  "react": "^19.0.0"
+  "react-dom": "^19.0.0"
+  "turbo": "~2.9.8"
+  "typescript": "^5.0.0"
+
 allowBuilds:
   electron: true
   sharp: false

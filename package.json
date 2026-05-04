@@ -7,14 +7,14 @@
   },
   "scripts": {
     "predev": "pnpm --filter @lightfastai/dev-core build && pnpm --filter @lightfastai/related-projects build && pnpm --filter @lightfastai/dev-services build",
-    "dev": "lightfast-dev-services inngest-sync --mfe-app app --mfe-app www -- portless-mfe turbo run dev --ui=tui --filter=app --filter=www",
+    "dev": "lightfast-dev-services inngest-sync --mfe-app app --mfe-app www -- portless-mfe turbo run dev --ui=tui --filter=@example/app --filter=@example/www",
     "dev:apps": "pnpm dev",
     "predev:app": "pnpm --filter @lightfastai/dev-core build && pnpm --filter @lightfastai/related-projects build && pnpm --filter @lightfastai/dev-services build",
-    "dev:app": "lightfast-dev-services inngest-sync --mfe-app app -- portless-mfe turbo run dev --filter=app",
+    "dev:app": "lightfast-dev-services inngest-sync --mfe-app app -- portless-mfe turbo run dev --filter=@example/app",
     "predev:desktop": "pnpm --filter @lightfastai/dev-core build && pnpm --filter @lightfastai/related-projects build",
-    "dev:desktop": "pnpm --filter desktop dev",
+    "dev:desktop": "pnpm --filter @example/desktop dev",
     "predev:www": "pnpm --filter @lightfastai/dev-core build && pnpm --filter @lightfastai/related-projects build && pnpm --filter @lightfastai/dev-services build",
-    "dev:www": "lightfast-dev-services inngest-sync --mfe-app www -- portless-mfe turbo run dev --filter=www",
+    "dev:www": "lightfast-dev-services inngest-sync --mfe-app www -- portless-mfe turbo run dev --filter=@example/www",
     "premfe:url": "pnpm --filter @lightfastai/dev-core build && pnpm --filter @lightfastai/related-projects build",
     "mfe:url": "portless-mfe url",
     "dev-core:release:check": "pnpm --filter @lightfastai/dev-core run release:check",
@@ -29,6 +29,9 @@
     "db:url": "lightfast-dev-services postgres-url --base-name mfe_sandbox",
     "db:up": "lightfast-dev-services postgres-up",
     "db:create": "lightfast-dev-services postgres-create --base-name mfe_sandbox",
+    "db:generate": "pnpm --filter @example/db-app db:generate",
+    "db:migrate": "pnpm --filter @example/db-app db:migrate",
+    "db:studio": "pnpm --filter @example/db-app db:studio",
     "redis:url": "lightfast-dev-services redis-url --base-name mfe_sandbox",
     "redis:up": "lightfast-dev-services redis-up --base-name mfe_sandbox",
     "redis:ping": "lightfast-dev-services redis-ping --base-name mfe_sandbox",
@@ -38,8 +41,8 @@
     "@lightfastai/dev-core": "workspace:*",
     "@lightfastai/dev-services": "workspace:*",
     "@lightfastai/related-projects": "workspace:*",
-    "portless": "^0.12.0",
-    "turbo": "~2.9.8",
-    "typescript": "^5.0.0"
+    "portless": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:"
   }
 }
