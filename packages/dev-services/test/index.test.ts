@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
 	assertLocalDevPostgresUrl,
@@ -142,19 +145,26 @@ test("Inngest dev sync skips persistent missing routes after grace", async () =>
 	assert.deepEqual(logs, ["Inngest sync skipped missing: HTTP 404"]);
 });
 
-test("dev Postgres database names include worktree identity and cwd hash", () => {
+test("dev Postgres database names use related-projects project identity and root hash", () => {
+	const fixture = createProjectFixture("mfe");
 	const databaseName = resolveDevPostgresDatabaseName({
-		baseName: "mfe-sandbox",
-		cwd: "/tmp/example-worktree",
+		cwd: fixture.nested,
 		env: {},
 		detectWorktreePrefix: () => "feature/db-worktrees",
 	});
 
-	assert.match(databaseName, /^mfe_sandbox_feature_db_worktrees_[a-f0-9]{8}$/);
+	assert.match(databaseName, /^mfe_feature_db_worktrees_[a-f0-9]{8}$/);
 	assert.equal(
 		resolveDevPostgresDatabaseName({
-			baseName: "mfe-sandbox",
-			cwd: "/tmp/example-worktree",
+			cwd: fixture.root,
+			env: {},
+			detectWorktreePrefix: () => "feature/db-worktrees",
+		}),
+		databaseName,
+	);
+	assert.equal(
+		resolveDevPostgresDatabaseName({
+			cwd: fixture.nested,
 			env: { LIGHTFAST_DEV_DATABASE_NAME: "custom_db" },
 		}),
 		"custom_db",
@@ -162,19 +172,18 @@ test("dev Postgres database names include worktree identity and cwd hash", () =>
 });
 
 test("dev Postgres config derives a local URL and honors DATABASE_URL", () => {
+	const fixture = createProjectFixture("mfe");
 	const derived = resolveDevPostgresConfig({
-		baseName: "mfe-sandbox",
-		cwd: "/tmp/example-worktree",
+		cwd: fixture.nested,
 		env: { LIGHTFAST_DEV_POSTGRES_PORT: "5544" },
 		detectWorktreePrefix: () => undefined,
 	});
 
 	assert.equal(derived.source, "derived");
 	assert.equal(derived.port, 5544);
-	assert.match(derived.databaseUrl, /^postgresql:\/\/postgres:postgres@127\.0\.0\.1:5544\/mfe_sandbox_main_[a-f0-9]{8}$/);
+	assert.match(derived.databaseUrl, /^postgresql:\/\/postgres:postgres@127\.0\.0\.1:5544\/mfe_main_[a-f0-9]{8}$/);
 
 	const fromEnv = resolveDevPostgresConfig({
-		baseName: "mfe-sandbox",
 		env: {
 			DATABASE_URL: "postgresql://postgres:secret@localhost:5555/worktree_db",
 		},
@@ -187,6 +196,14 @@ test("dev Postgres config derives a local URL and honors DATABASE_URL", () => {
 	assert.equal(
 		redactPostgresUrl(fromEnv.databaseUrl),
 		"postgresql://postgres:****@localhost:5555/worktree_db",
+	);
+});
+
+test("dev Postgres config requires related-projects.json for derived names", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-services-no-config-"));
+	assert.throws(
+		() => resolveDevPostgresConfig({ cwd: root, env: {} }),
+		/Could not find related-projects\.json/,
 	);
 });
 
@@ -205,19 +222,26 @@ test("dev Postgres URL validation rejects remote and reserved databases", () => 
 	);
 });
 
-test("dev Redis key prefixes include worktree identity and cwd hash", () => {
+test("dev Redis key prefixes use related-projects project identity and root hash", () => {
+	const fixture = createProjectFixture("mfe");
 	const keyPrefix = resolveDevRedisKeyPrefix({
-		baseName: "Lightfast",
-		cwd: "/tmp/example-worktree",
+		cwd: fixture.nested,
 		env: {},
 		detectWorktreePrefix: () => "feature/redis-worktrees",
 	});
 
-	assert.match(keyPrefix, /^lightfast:feature-redis-worktrees:[a-f0-9]{8}$/);
+	assert.match(keyPrefix, /^mfe:feature-redis-worktrees:[a-f0-9]{8}$/);
 	assert.equal(
 		resolveDevRedisKeyPrefix({
-			baseName: "Lightfast",
-			cwd: "/tmp/example-worktree",
+			cwd: fixture.root,
+			env: {},
+			detectWorktreePrefix: () => "feature/redis-worktrees",
+		}),
+		keyPrefix,
+	);
+	assert.equal(
+		resolveDevRedisKeyPrefix({
+			cwd: fixture.nested,
 			env: { LIGHTFAST_DEV_REDIS_KEY_PREFIX: "custom:redis_prefix" },
 		}),
 		"custom:redis-prefix",
@@ -225,9 +249,9 @@ test("dev Redis key prefixes include worktree identity and cwd hash", () => {
 });
 
 test("dev Redis config derives local REST config and honors env config", () => {
+	const fixture = createProjectFixture("mfe");
 	const derived = resolveDevRedisConfig({
-		baseName: "Lightfast",
-		cwd: "/tmp/example-worktree",
+		cwd: fixture.nested,
 		env: { LIGHTFAST_DEV_REDIS_REST_PORT: "8078" },
 		detectWorktreePrefix: () => undefined,
 	});
@@ -235,11 +259,10 @@ test("dev Redis config derives local REST config and honors env config", () => {
 	assert.equal(derived.source, "derived");
 	assert.equal(derived.restUrl, "http://127.0.0.1:8078");
 	assert.equal(derived.token, "lightfast-dev-redis-token");
-	assert.match(derived.keyPrefix, /^lightfast:main:[a-f0-9]{8}$/);
+	assert.match(derived.keyPrefix, /^mfe:main:[a-f0-9]{8}$/);
 
 	const fromEnv = resolveDevRedisConfig({
-		baseName: "Lightfast",
-		cwd: "/tmp/example-worktree",
+		cwd: fixture.nested,
 		env: {
 			KV_REST_API_URL: "https://example.upstash.io/",
 			KV_REST_API_TOKEN: "secret",
@@ -256,9 +279,10 @@ test("dev Redis config derives local REST config and honors env config", () => {
 });
 
 test("dev Redis config requires URL and token together", () => {
+	const fixture = createProjectFixture("mfe");
 	assert.throws(
 		() => resolveDevRedisConfig({
-			baseName: "Lightfast",
+			cwd: fixture.nested,
 			env: { KV_REST_API_URL: "https://example.upstash.io" },
 		}),
 		/both URL and token/,
@@ -322,21 +346,20 @@ test("CLI identity prints worktree-scoped JSON", () => {
 });
 
 test("CLI postgres-url prints derived JSON config", () => {
+	const fixture = createProjectFixture("mfe");
 	const result = spawnSync(
 		process.execPath,
 		[
-			"dist/cli.js",
+			path.resolve("dist/cli.js"),
 			"postgres-url",
-			"--base-name",
-			"mfe-sandbox",
 			"--json",
 		],
 		{
-			cwd: process.cwd(),
+			cwd: fixture.nested,
 			encoding: "utf8",
 			env: {
 				...process.env,
-				LIGHTFAST_DEV_DATABASE_NAME: "mfe_sandbox_cli",
+				LIGHTFAST_DEV_DATABASE_NAME: "",
 				LIGHTFAST_DEV_POSTGRES_PORT: "5544",
 				DATABASE_URL: "",
 			},
@@ -351,28 +374,49 @@ test("CLI postgres-url prints derived JSON config", () => {
 		redactedDatabaseUrl: string;
 		port: number;
 	};
-	assert.equal(config.databaseName, "mfe_sandbox_cli");
+	assert.match(config.databaseName, /^mfe_main_[a-f0-9]{8}$/);
 	assert.equal(config.port, 5544);
-	assert.equal(config.databaseUrl, "postgresql://postgres:postgres@127.0.0.1:5544/mfe_sandbox_cli");
-	assert.equal(config.redactedDatabaseUrl, "postgresql://postgres:****@127.0.0.1:5544/mfe_sandbox_cli");
+	assert.equal(config.databaseUrl, `postgresql://postgres:postgres@127.0.0.1:5544/${config.databaseName}`);
+	assert.equal(config.redactedDatabaseUrl, `postgresql://postgres:****@127.0.0.1:5544/${config.databaseName}`);
 });
 
-test("CLI redis-url prints derived JSON config", () => {
+test("CLI rejects removed base-name option", () => {
+	const fixture = createProjectFixture("mfe");
 	const result = spawnSync(
 		process.execPath,
 		[
-			"dist/cli.js",
-			"redis-url",
+			path.resolve("dist/cli.js"),
+			"postgres-url",
 			"--base-name",
-			"lightfast",
+			"mfe",
 			"--json",
 		],
 		{
-			cwd: process.cwd(),
+			cwd: fixture.root,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
+
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /Unknown option "--base-name"/);
+});
+
+test("CLI redis-url prints derived JSON config", () => {
+	const fixture = createProjectFixture("mfe");
+	const result = spawnSync(
+		process.execPath,
+		[
+			path.resolve("dist/cli.js"),
+			"redis-url",
+			"--json",
+		],
+		{
+			cwd: fixture.nested,
 			encoding: "utf8",
 			env: {
 				...process.env,
-				LIGHTFAST_DEV_REDIS_KEY_PREFIX: "lightfast:cli",
+				LIGHTFAST_DEV_REDIS_KEY_PREFIX: "",
 				LIGHTFAST_DEV_REDIS_REST_PORT: "8078",
 				KV_REST_API_URL: "",
 				KV_REST_API_TOKEN: "",
@@ -392,9 +436,20 @@ test("CLI redis-url prints derived JSON config", () => {
 	};
 	assert.equal(config.restUrl, "http://127.0.0.1:8078");
 	assert.equal(config.redactedRestUrl, "http://127.0.0.1:8078");
-	assert.equal(config.keyPrefix, "lightfast:cli");
+	assert.match(config.keyPrefix, /^mfe:main:[a-f0-9]{8}$/);
 	assert.equal(config.restPort, 8078);
 });
+
+function createProjectFixture(name: string): { root: string; nested: string } {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-services-project-"));
+	const nested = path.join(root, "example", "apps", "app");
+	fs.mkdirSync(nested, { recursive: true });
+	fs.writeFileSync(
+		path.join(root, "related-projects.json"),
+		JSON.stringify({ portless: { name } }),
+	);
+	return { root, nested };
+}
 
 async function waitFor(predicate: () => boolean): Promise<void> {
 	const startedAt = Date.now();

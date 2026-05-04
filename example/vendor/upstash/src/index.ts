@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import path from "node:path";
 import {
 	type DevRedisConfig,
 	redactRedisRestUrl,
@@ -8,10 +6,7 @@ import {
 import { Redis } from "@upstash/redis";
 
 function createRedis() {
-	const config = resolveDevRedisConfig({
-		baseName: "mfe_sandbox",
-		cwd: resolveExampleWorkspaceRoot(),
-	});
+	const config = resolveDevRedisConfig();
 	const redis = new Redis({
 		url: config.restUrl,
 		token: config.token,
@@ -36,29 +31,13 @@ function createRedis() {
 
 type ExampleRedis = ReturnType<typeof createRedis>;
 
-declare global {
-	var __mfeSandboxExampleRedis: ExampleRedis | undefined;
-}
-
-export function resolveExampleWorkspaceRoot(startDir = process.cwd()): string {
-	let dir = path.resolve(startDir);
-
-	for (;;) {
-		if (existsSync(path.join(dir, "pnpm-workspace.yaml"))) {
-			return dir;
-		}
-
-		const parent = path.dirname(dir);
-		if (parent === dir) {
-			throw new Error(`Unable to find workspace root from ${startDir}`);
-		}
-		dir = parent;
-	}
-}
+let redisInstance: ExampleRedis | undefined;
 
 export function getRedis(): ExampleRedis {
-	globalThis.__mfeSandboxExampleRedis ??= createRedis();
-	return globalThis.__mfeSandboxExampleRedis;
+	// Upstash Redis uses HTTP and does not own a TCP pool like postgres.js, so a
+	// module-local singleton is enough for lazy config/client creation.
+	redisInstance ??= createRedis();
+	return redisInstance;
 }
 
 export { Redis, redactRedisRestUrl };

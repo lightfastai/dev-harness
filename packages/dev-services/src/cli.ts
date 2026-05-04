@@ -23,7 +23,7 @@ const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 
 interface CliOptions {
 	appName?: string;
-	baseName?: string;
+	configPath?: string;
 	json?: boolean;
 	mfeApps: string[];
 	appUrls: Array<{ appName: string; url: string }>;
@@ -346,8 +346,8 @@ function parseOptions(args: string[]): { options: CliOptions } {
 			case "--app-name":
 				options.appName = readOptionValue(args, ++i, arg);
 				break;
-			case "--base-name":
-				options.baseName = readOptionValue(args, ++i, arg);
+			case "--config":
+				options.configPath = readOptionValue(args, ++i, arg);
 				break;
 			case "--mfe-app":
 				options.mfeApps.push(readOptionValue(args, ++i, arg));
@@ -402,25 +402,17 @@ function readOptionValue(args: string[], index: number, option: string): string 
 }
 
 function resolvePostgresConfigFromOptions(options: CliOptions): DevPostgresConfig {
-	if (!options.baseName) {
-		throw new Error("Postgres commands require --base-name <name>.");
-	}
-
 	return resolveDevPostgresConfig({
-		baseName: options.baseName,
 		cwd: process.cwd(),
+		configPath: options.configPath,
 		env: process.env,
 	});
 }
 
 function resolveRedisConfigFromOptions(options: CliOptions): DevRedisConfig {
-	if (!options.baseName) {
-		throw new Error("Redis commands require --base-name <name>.");
-	}
-
 	return resolveDevRedisConfig({
-		baseName: options.baseName,
 		cwd: process.cwd(),
+		configPath: options.configPath,
 		env: process.env,
 	});
 }
@@ -737,16 +729,16 @@ function printHelp(): void {
 	console.log(`Usage:
   lightfast-dev-services identity --app-name <name> [--json]
   lightfast-dev-services inngest-sync [--mfe-app <name>] [--app-url <name=url>] -- <command> [...args]
-  lightfast-dev-services postgres-url --base-name <name> [--json]
+  lightfast-dev-services postgres-url [--json]
   lightfast-dev-services postgres-up [--json]
-  lightfast-dev-services postgres-create --base-name <name> [--json]
-  lightfast-dev-services redis-url --base-name <name> [--json]
-  lightfast-dev-services redis-up --base-name <name> [--json]
-  lightfast-dev-services redis-ping --base-name <name> [--json]
+  lightfast-dev-services postgres-create [--json]
+  lightfast-dev-services redis-url [--json]
+  lightfast-dev-services redis-up [--json]
+  lightfast-dev-services redis-ping [--json]
 
 Options:
   --app-name <name>     Runtime base app name for identity
-  --base-name <name>    Base name for derived worktree database names
+  --config <path>       Path to related-projects.json. Default: walk upward from cwd
   --mfe-app <name>      Resolve a Portless MFE app URL through @lightfastai/related-projects
   --app-url <name=url>  Explicit app URL to sync into the Inngest Dev Server
   --serve-path <path>   Inngest serve route path. Default: /api/inngest

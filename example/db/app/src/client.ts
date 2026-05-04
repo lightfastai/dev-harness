@@ -4,13 +4,9 @@ import {
 } from "@lightfastai/dev-services";
 import { createDrizzlePostgresClient } from "@example/vendor-db";
 import * as schema from "./schema";
-import { resolveExampleWorkspaceRoot } from "./workspace";
 
 function createDb() {
-	const config = resolveDevPostgresConfig({
-		baseName: "mfe_sandbox",
-		cwd: resolveExampleWorkspaceRoot(),
-	});
+	const config = resolveDevPostgresConfig();
 	const { client, db } = createDrizzlePostgresClient({
 		databaseUrl: config.databaseUrl,
 		postgresOptions: {
@@ -26,6 +22,8 @@ function createDb() {
 
 type ExampleDb = ReturnType<typeof createDb>;
 
+// Drizzle delegates pooling to postgres.js. Cache through globalThis so Next dev
+// module reloads do not create duplicate Postgres pools in the same process.
 declare global {
 	var __mfeSandboxExampleDb: ExampleDb | undefined;
 }

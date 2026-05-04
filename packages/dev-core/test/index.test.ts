@@ -7,6 +7,7 @@ import test from "node:test";
 import {
 	branchToPrefix,
 	defaultDetectWorktreePrefix,
+	resolveDevProjectConfig,
 	resolveWorktreeIdentity,
 	resolveWorktreeRuntimeName,
 	sanitizeWorktreePrefix,
@@ -57,6 +58,37 @@ test("defaultDetectWorktreePrefix falls back to git worktree file detection", ()
 	assert.equal(defaultDetectWorktreePrefix(nested), "worktree-core");
 });
 
+test("resolveDevProjectConfig reads related-projects.json from nested cwd", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-core-project-"));
+	const nested = path.join(root, "example", "apps", "app");
+	fs.mkdirSync(nested, { recursive: true });
+	fs.writeFileSync(
+		path.join(root, "related-projects.json"),
+		JSON.stringify({ portless: { name: "mfe" } }),
+	);
+
+	assert.deepEqual(resolveDevProjectConfig({ cwd: nested }), {
+		root,
+		configPath: path.join(root, "related-projects.json"),
+		name: "mfe",
+	});
+});
+
+test("resolveDevProjectConfig reports missing or incomplete config", () => {
+	const missingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dev-core-no-project-"));
+	assert.throws(
+		() => resolveDevProjectConfig({ cwd: missingRoot }),
+		/Could not find related-projects\.json/,
+	);
+
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-core-bad-project-"));
+	fs.writeFileSync(path.join(root, "related-projects.json"), "{}");
+	assert.throws(
+		() => resolveDevProjectConfig({ cwd: root }),
+		/must include portless\.name/,
+	);
+});
+
 test("package export map supports intended ESM imports", () => {
 	const result = spawnSync(
 		process.execPath,
@@ -65,6 +97,7 @@ test("package export map supports intended ESM imports", () => {
 			"--eval",
 			`
 				const api = await import("@lightfastai/dev-core");
+				if (typeof api.resolveDevProjectConfig !== "function") throw new Error("missing project config API");
 				if (typeof api.resolveWorktreeRuntimeName !== "function") throw new Error("missing identity API");
 				if (typeof api.defaultDetectWorktreePrefix !== "function") throw new Error("missing detection API");
 			`,

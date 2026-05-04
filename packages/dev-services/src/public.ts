@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import {
+	resolveDevProjectConfig,
 	resolveWorktreeIdentity,
 	type DetectWorktreePrefix,
 } from "@lightfastai/dev-core";
@@ -8,8 +9,8 @@ import {
 export type Env = Record<string, string | undefined>;
 
 export interface ResolveDevPostgresDatabaseNameOptions {
-	baseName: string;
 	cwd?: string;
+	configPath?: string;
 	env?: Env;
 	detectWorktreePrefix?: DetectWorktreePrefix;
 }
@@ -17,8 +18,8 @@ export interface ResolveDevPostgresDatabaseNameOptions {
 export type ResolveDevPostgresConfigOptions = ResolveDevPostgresDatabaseNameOptions;
 
 export interface ResolveDevRedisKeyPrefixOptions {
-	baseName: string;
 	cwd?: string;
+	configPath?: string;
 	env?: Env;
 	detectWorktreePrefix?: DetectWorktreePrefix;
 }
@@ -115,25 +116,26 @@ export function resolveDevPostgresServiceConfig(
 }
 
 export function resolveDevPostgresDatabaseName({
-	baseName,
 	cwd = process.cwd(),
+	configPath,
 	env = process.env,
 	detectWorktreePrefix,
-}: ResolveDevPostgresDatabaseNameOptions): string {
+}: ResolveDevPostgresDatabaseNameOptions = {}): string {
 	const explicitName = env.LIGHTFAST_DEV_DATABASE_NAME;
 	if (explicitName) {
 		return assertSafeDatabaseName(sanitizeDatabaseName(explicitName));
 	}
 
+	const project = resolveDevProjectConfig({ cwd, configPath });
 	const identity = resolveWorktreeIdentity({
-		baseName,
-		cwd,
+		baseName: project.name,
+		cwd: project.root,
 		detectWorktreePrefix,
 	});
 	const basePart = sanitizeDatabaseName(identity.baseName);
 	const worktreePart = sanitizeDatabaseName(identity.worktreePrefix ?? "main");
 	const hash = createHash("sha1")
-		.update(path.resolve(cwd))
+		.update(path.resolve(project.root))
 		.digest("hex")
 		.slice(0, 8);
 	const prefixMaxLength = POSTGRES_NAME_MAX_LENGTH - hash.length - 2;
@@ -143,11 +145,11 @@ export function resolveDevPostgresDatabaseName({
 }
 
 export function resolveDevPostgresConfig({
-	baseName,
 	cwd = process.cwd(),
+	configPath,
 	env = process.env,
 	detectWorktreePrefix,
-}: ResolveDevPostgresConfigOptions): DevPostgresConfig {
+}: ResolveDevPostgresConfigOptions = {}): DevPostgresConfig {
 	const service = resolveDevPostgresServiceConfig(env);
 	const databaseUrl = env.DATABASE_URL;
 
@@ -166,8 +168,8 @@ export function resolveDevPostgresConfig({
 	}
 
 	const databaseName = resolveDevPostgresDatabaseName({
-		baseName,
 		cwd,
+		configPath,
 		env,
 		detectWorktreePrefix,
 	});
@@ -245,25 +247,26 @@ export function resolveDevRedisServiceConfig(env: Env = process.env): DevRedisSe
 }
 
 export function resolveDevRedisKeyPrefix({
-	baseName,
 	cwd = process.cwd(),
+	configPath,
 	env = process.env,
 	detectWorktreePrefix,
-}: ResolveDevRedisKeyPrefixOptions): string {
+}: ResolveDevRedisKeyPrefixOptions = {}): string {
 	const explicitPrefix = env.LIGHTFAST_DEV_REDIS_KEY_PREFIX;
 	if (explicitPrefix) {
 		return assertSafeRedisKeyPrefix(sanitizeRedisKeyPrefix(explicitPrefix));
 	}
 
+	const project = resolveDevProjectConfig({ cwd, configPath });
 	const identity = resolveWorktreeIdentity({
-		baseName,
-		cwd,
+		baseName: project.name,
+		cwd: project.root,
 		detectWorktreePrefix,
 	});
 	const basePart = sanitizeRedisKeyPrefixPart(identity.baseName);
 	const worktreePart = sanitizeRedisKeyPrefixPart(identity.worktreePrefix ?? "main");
 	const hash = createHash("sha1")
-		.update(path.resolve(cwd))
+		.update(path.resolve(project.root))
 		.digest("hex")
 		.slice(0, 8);
 
@@ -271,17 +274,17 @@ export function resolveDevRedisKeyPrefix({
 }
 
 export function resolveDevRedisConfig({
-	baseName,
 	cwd = process.cwd(),
+	configPath,
 	env = process.env,
 	detectWorktreePrefix,
-}: ResolveDevRedisConfigOptions): DevRedisConfig {
+}: ResolveDevRedisConfigOptions = {}): DevRedisConfig {
 	const service = resolveDevRedisServiceConfig(env);
 	const envRestUrl = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
 	const envToken = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
 	const keyPrefix = resolveDevRedisKeyPrefix({
-		baseName,
 		cwd,
+		configPath,
 		env,
 		detectWorktreePrefix,
 	});

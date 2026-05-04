@@ -8,7 +8,7 @@ This package owns reusable service helpers that are not specific to Portless or 
 - Wrapper CLI commands for local service coordination.
 - Consumer guidance for singleton local services such as Inngest, Redis, and Drizzle Studio.
 
-Worktree identity library APIs live in `@lightfastai/dev-core`, not this package.
+Worktree identity and `related-projects.json` project discovery APIs live in `@lightfastai/dev-core`, not this package.
 
 The CLI form is available when shell scripts need the same value:
 
@@ -74,7 +74,7 @@ pnpm db:create
 pnpm db:url
 ```
 
-The default service is `postgres:17-alpine` in a `lightfast-postgres` container with the `lightfast-postgres-data` volume. `DATABASE_URL` wins when set, but it must point at localhost. Otherwise the database name is derived from the base name, worktree identity, and cwd hash.
+The CLI walks upward to find `related-projects.json`; pass `--config <path>` only when running from outside the repo tree. The default service is `postgres:17-alpine` in a `lightfast-postgres` container with the `lightfast-postgres-data` volume. `DATABASE_URL` wins when set, but it must point at localhost. Otherwise the database name is derived from `related-projects.json` `portless.name`, worktree identity, and the config root hash.
 
 Useful overrides:
 
@@ -94,7 +94,7 @@ pnpm redis:ping
 pnpm redis:url
 ```
 
-The default service uses `redis/redis-stack-server:6.2.6-v6` in a `lightfast-redis` container and `hiett/serverless-redis-http:latest` in a `lightfast-redis-http` container. Worktrees share those containers and isolate data with a derived key prefix based on the base name, worktree identity, and cwd hash.
+The CLI walks upward to find `related-projects.json`; pass `--config <path>` only when running from outside the repo tree. The default service uses `redis/redis-stack-server:6.2.6-v6` in a `lightfast-redis` container and `hiett/serverless-redis-http:latest` in a `lightfast-redis-http` container. Worktrees share those containers and isolate data with a derived key prefix based on `related-projects.json` `portless.name`, worktree identity, and the config root hash.
 
 Useful overrides:
 

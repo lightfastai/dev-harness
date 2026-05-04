@@ -2,7 +2,7 @@
 
 Core local development primitives for Lightfast worktrees.
 
-This package owns worktree identity and prefix detection shared by local dev tooling. It does not know about Portless, Vercel Microfrontends, Inngest, or app-specific service wiring.
+This package owns worktree identity, prefix detection, and the small shared project identity read from `related-projects.json`. It does not know about Portless runtime behavior, Vercel Microfrontends, Inngest, or app-specific service wiring.
 
 ## Usage
 
@@ -31,12 +31,22 @@ const identity = resolveWorktreeIdentity({ baseName: "lightfast-platform" });
 // { name, baseName, worktreePrefix }
 ```
 
+Resolve the shared local-dev project identity from `related-projects.json`:
+
+```ts
+import { resolveDevProjectConfig } from "@lightfastai/dev-core";
+
+const project = resolveDevProjectConfig();
+// { root, configPath, name } where name is related-projects.json portless.name
+```
+
 ## API
 
 ```ts
 import {
   branchToPrefix,
   defaultDetectWorktreePrefix,
+  resolveDevProjectConfig,
   resolveWorktreeIdentity,
   resolveWorktreeRuntimeName,
   sanitizeWorktreePrefix,
