@@ -9,6 +9,7 @@ import {
 	BRIDGE_EXTERNAL_ORIGIN_HEADER,
 	buildBridgeExternalOrigin,
 	buildBridgeRequestHeaders,
+	buildBridgeUpgradeRequestHeaders,
 } from "../src/bridge-headers.js";
 import {
 	addTurboDevEnvMode,
@@ -301,7 +302,7 @@ test("bridge request headers rewrite host and strip stale proxy forwarding heade
 	assert.equal(headers.host, "app.lightfast.localhost:1355");
 	assert.equal(headers.origin, "http://lightfast.localhost:1355");
 	assert.equal(headers["x-forwarded-for"], "127.0.0.1");
-	assert.equal(headers["x-forwarded-host"], "app.lightfast.localhost:1355");
+	assert.equal(headers["x-forwarded-host"], "lightfast.localhost:1355");
 	assert.equal(headers["x-forwarded-port"], "1355");
 	assert.equal(headers["x-forwarded-proto"], "http");
 	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "http://lightfast.localhost:1355");
@@ -329,7 +330,7 @@ test("bridge request headers preserve worktree aggregate origin separately from 
 
 	assert.equal(externalOrigin, "https://fix-ui.lightfast.localhost");
 	assert.equal(headers.host, "fix-ui.app.lightfast.localhost");
-	assert.equal(headers["x-forwarded-host"], "fix-ui.app.lightfast.localhost");
+	assert.equal(headers["x-forwarded-host"], "fix-ui.lightfast.localhost");
 	assert.equal(headers["x-forwarded-port"], "443");
 	assert.equal(headers["x-forwarded-proto"], "https");
 	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "https://fix-ui.lightfast.localhost");
@@ -340,6 +341,57 @@ test("bridge request headers preserve worktree aggregate origin separately from 
 		),
 		"http://fix-ui.mfe.localhost:1355",
 	);
+});
+
+test("bridge request headers use resolved app URL for host and aggregate origin for forwarded host", () => {
+	const headers = buildBridgeRequestHeaders(
+		{ host: "127.0.0.1:6924" },
+		new URL("https://fix-ui.app.lightfast.localhost/sign-in"),
+		{
+			forwardedHost: "this-would-be-wrong.localhost",
+			forwardedProto: "http",
+			forwardedPort: 1355,
+			externalOrigin: "https://fix-ui.lightfast.localhost",
+		},
+	);
+
+	assert.equal(headers.host, "fix-ui.app.lightfast.localhost");
+	assert.equal(headers["x-forwarded-host"], "fix-ui.lightfast.localhost");
+	assert.equal(headers["x-forwarded-port"], "443");
+	assert.equal(headers["x-forwarded-proto"], "https");
+	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "https://fix-ui.lightfast.localhost");
+});
+
+test("bridge upgrade headers preserve websocket handshake while forwarding aggregate origin", () => {
+	const headers = buildBridgeUpgradeRequestHeaders(
+		{
+			host: "127.0.0.1:6924",
+			connection: "keep-alive, Upgrade",
+			upgrade: "websocket",
+			"sec-websocket-key": "test-key",
+			"sec-websocket-version": "13",
+			"x-forwarded-host": "localhost",
+			"x-forwarded-port": "443",
+			"x-forwarded-proto": "https",
+		},
+		new URL("https://fix-ui.app.lightfast.localhost/_next/webpack-hmr?id=test"),
+		{
+			forwardedHost: "this-would-be-wrong.localhost",
+			forwardedProto: "http",
+			forwardedPort: 1355,
+			externalOrigin: "https://fix-ui.lightfast.localhost",
+		},
+	);
+
+	assert.equal(headers.host, "fix-ui.app.lightfast.localhost");
+	assert.equal(headers.connection, "Upgrade");
+	assert.equal(headers.upgrade, "websocket");
+	assert.equal(headers["sec-websocket-key"], "test-key");
+	assert.equal(headers["sec-websocket-version"], "13");
+	assert.equal(headers["x-forwarded-host"], "fix-ui.lightfast.localhost");
+	assert.equal(headers["x-forwarded-port"], "443");
+	assert.equal(headers["x-forwarded-proto"], "https");
+	assert.equal(headers[BRIDGE_EXTERNAL_ORIGIN_HEADER], "https://fix-ui.lightfast.localhost");
 });
 
 test("bridge external origin prefers upstream forwarded browser origin", () => {

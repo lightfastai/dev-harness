@@ -10,6 +10,7 @@ import type { Duplex } from "node:stream";
 import {
 	buildBridgeExternalOrigin,
 	buildBridgeRequestHeaders,
+	buildBridgeUpgradeRequestHeaders,
 	stripHopByHopHeaders,
 } from "./bridge-headers.js";
 import {
@@ -768,7 +769,7 @@ function proxyUpgradeToPortlessApp({
 	});
 
 	const target = new URL(req.url ?? "/", targetUrl);
-	const headers = buildBridgeRequestHeaders(req.headers, target, {
+	const headers = buildBridgeUpgradeRequestHeaders(req.headers, target, {
 		forwardedHost: target.host,
 		forwardedProto: target.protocol.replace(":", ""),
 		forwardedPort: target.port || (target.protocol === "https:" ? "443" : "80"),

@@ -29,19 +29,32 @@ export function buildBridgeRequestHeaders(
 	deleteHeader(headers, "x-forwarded-proto");
 	deleteHeader(headers, "x-forwarded-port");
 	deleteHeader(headers, BRIDGE_EXTERNAL_ORIGIN_HEADER);
-	if (options.forwardedHost) {
-		headers["x-forwarded-host"] = options.forwardedHost;
-	}
-	if (options.forwardedProto) {
-		headers["x-forwarded-proto"] = options.forwardedProto;
-	}
-	if (options.forwardedPort !== undefined) {
-		headers["x-forwarded-port"] = String(options.forwardedPort);
-	}
 	if (options.externalOrigin) {
+		applyExternalOriginForwardingHeaders(headers, options.externalOrigin);
 		headers[BRIDGE_EXTERNAL_ORIGIN_HEADER] = options.externalOrigin;
+	} else {
+		if (options.forwardedHost) {
+			headers["x-forwarded-host"] = options.forwardedHost;
+		}
+		if (options.forwardedProto) {
+			headers["x-forwarded-proto"] = options.forwardedProto;
+		}
+		if (options.forwardedPort !== undefined) {
+			headers["x-forwarded-port"] = String(options.forwardedPort);
+		}
 	}
 	headers.host = target.host;
+	return headers;
+}
+
+export function buildBridgeUpgradeRequestHeaders(
+	sourceHeaders: IncomingHttpHeaders,
+	target: URL,
+	options: BuildBridgeRequestHeadersOptions = {},
+): BridgeRequestHeaders {
+	const headers = buildBridgeRequestHeaders(sourceHeaders, target, options);
+	headers.connection = "Upgrade";
+	headers.upgrade = firstHeaderValue(sourceHeaders.upgrade) ?? "websocket";
 	return headers;
 }
 
@@ -127,6 +140,22 @@ function buildForwardedExternalOrigin(
 		return origin.origin;
 	} catch {
 		return undefined;
+	}
+}
+
+function applyExternalOriginForwardingHeaders(
+	headers: BridgeRequestHeaders,
+	externalOrigin: string,
+): void {
+	try {
+		const origin = new URL(externalOrigin);
+		headers["x-forwarded-host"] = origin.host;
+		headers["x-forwarded-proto"] = origin.protocol.replace(":", "");
+		headers["x-forwarded-port"] =
+			origin.port || (origin.protocol === "https:" ? "443" : "80");
+	} catch {
+		// Keep the caller-provided metadata header for debugging, but do not
+		// synthesize standard forwarding headers from an invalid origin.
 	}
 }
 
