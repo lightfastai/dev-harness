@@ -1,4 +1,5 @@
 import type { DevProjectConfig } from "@lightfastai/dev-core";
+import type { DevNeonHttpProxyConfig } from "../neon-http-proxy/config.js";
 import {
 	redactPostgresUrl,
 	type DevPostgresConfig,
@@ -10,6 +11,7 @@ import {
 import type {
 	DevServiceCheck,
 	DevServicesReport,
+	NeonHttpProxyReport,
 	PostgresReport,
 	ProjectReport,
 	RedisReport,
@@ -21,6 +23,7 @@ export function createReport(): DevServicesReport {
 		project: null,
 		postgres: null,
 		redis: null,
+		neonHttpProxy: null,
 		failures: [],
 	};
 }
@@ -55,6 +58,17 @@ export function formatRedisReport(config: DevRedisConfig): RedisReport {
 		keyPrefix: config.keyPrefix,
 		redisContainerName: config.redisContainerName,
 		httpContainerName: config.httpContainerName,
+		checks: [],
+	};
+}
+
+export function formatNeonHttpProxyReport(config: DevNeonHttpProxyConfig): NeonHttpProxyReport {
+	return {
+		containerName: config.containerName,
+		image: config.image,
+		host: config.host,
+		hostPort: config.hostPort,
+		networkName: config.networkName,
 		checks: [],
 	};
 }
@@ -110,6 +124,9 @@ function printResolvedServices(report: DevServicesReport): void {
 	if (report.redis) {
 		console.log(`Redis REST: ${report.redis.restUrl}`);
 		console.log(`Redis key prefix: ${report.redis.keyPrefix}`);
+	}
+	if (report.neonHttpProxy) {
+		console.log(`Neon HTTP proxy: ${report.neonHttpProxy.containerName} at ${report.neonHttpProxy.host}:${report.neonHttpProxy.hostPort}`);
 	}
 }
 

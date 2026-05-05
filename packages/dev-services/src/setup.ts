@@ -1,3 +1,4 @@
+import { ensureNeonHttpProxyContainer } from "./neon-http-proxy/docker.js";
 import { ensurePostgresContainer, ensurePostgresDatabase } from "./postgres/docker.js";
 import { ensureRedisServices } from "./redis/docker.js";
 import { pingRedisRest } from "./redis/rest.js";
@@ -5,6 +6,7 @@ import {
 	addCheck,
 	createReport,
 	finalizeReport,
+	formatNeonHttpProxyReport,
 	formatPostgresReport,
 	formatProjectReport,
 	formatRedisReport,
@@ -18,10 +20,11 @@ export async function runDevServicesSetup(options: DevServiceOptions = {}): Prom
 	const report = createReport();
 
 	try {
-		const { identity, postgres, redis } = resolveDevServiceConfigs(options);
+		const { identity, postgres, redis, neonHttpProxy } = resolveDevServiceConfigs(options);
 		report.project = formatProjectReport(identity);
 		report.postgres = formatPostgresReport(postgres);
 		report.redis = formatRedisReport(redis);
+		report.neonHttpProxy = formatNeonHttpProxyReport(neonHttpProxy);
 
 		await ensurePostgresContainer(postgres);
 		addCheck(report.postgres, {
@@ -36,6 +39,13 @@ export async function runDevServicesSetup(options: DevServiceOptions = {}): Prom
 			name: "postgres-database",
 			status: "pass",
 			message: `${created ? "Created" : "Reused"} database ${postgres.databaseName}`,
+		});
+
+		await ensureNeonHttpProxyContainer(neonHttpProxy);
+		addCheck(report.neonHttpProxy, {
+			name: "neon-http-proxy-container",
+			status: "pass",
+			message: `${neonHttpProxy.containerName} is serving http://${neonHttpProxy.host}:${neonHttpProxy.hostPort}`,
 		});
 
 		await ensureRedisServices(redis);

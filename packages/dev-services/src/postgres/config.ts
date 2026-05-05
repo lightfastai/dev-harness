@@ -23,6 +23,7 @@ export interface DevPostgresServiceConfig {
 	port: number;
 	username: string;
 	password: string;
+	networkName: string;
 }
 
 export interface DevPostgresConfig extends DevPostgresServiceConfig {
@@ -43,6 +44,7 @@ export const DEFAULT_DEV_POSTGRES_HOST = "127.0.0.1";
 export const DEFAULT_DEV_POSTGRES_PORT = 5432;
 export const DEFAULT_DEV_POSTGRES_USERNAME = "postgres";
 export const DEFAULT_DEV_POSTGRES_PASSWORD = "postgres";
+export const DEFAULT_DEV_POSTGRES_NETWORK = "lightfast-dev";
 
 const POSTGRES_NAME_MAX_LENGTH = 63;
 const RESERVED_DATABASE_NAMES = new Set(["postgres", "template0", "template1"]);
@@ -70,6 +72,7 @@ export function resolveDevPostgresServiceConfig(
 		password: databaseUrl?.password
 			? decodeURIComponent(databaseUrl.password)
 			: DEFAULT_DEV_POSTGRES_PASSWORD,
+		networkName: env.LIGHTFAST_DEV_POSTGRES_NETWORK || DEFAULT_DEV_POSTGRES_NETWORK,
 	};
 }
 

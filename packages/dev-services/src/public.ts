@@ -1,5 +1,7 @@
 export * from "./doctor.js";
 export * from "./inngest/sync.js";
+export * from "./neon-http-proxy/config.js";
+export * from "./neon-http-proxy/docker.js";
 export type * from "./options.js";
 export * from "./postgres/config.js";
 export * from "./postgres/docker.js";

@@ -4,21 +4,27 @@ import type {
 	DevPostgresServiceConfig,
 } from "./config.js";
 import {
+	ensureContainerOnNetwork,
+	ensureDockerNetwork,
 	inspectDockerContainer,
 	runDocker,
 	spawnOutput,
 } from "../docker/client.js";
 
 export async function ensurePostgresContainer(service: DevPostgresServiceConfig): Promise<void> {
+	ensureDockerNetwork(service.networkName);
+
 	const state = inspectDockerContainer(service.containerName);
 
 	if (state === "running") {
+		ensureContainerOnNetwork(service.containerName, service.networkName);
 		await waitForPostgres(service);
 		return;
 	}
 
 	if (state === "stopped") {
 		runDocker(["start", service.containerName], `Unable to start Docker container ${service.containerName}.`);
+		ensureContainerOnNetwork(service.containerName, service.networkName);
 		await waitForPostgres(service);
 		return;
 	}
@@ -28,6 +34,8 @@ export async function ensurePostgresContainer(service: DevPostgresServiceConfig)
 			"run",
 			"--name",
 			service.containerName,
+			"--network",
+			service.networkName,
 			"-e",
 			`POSTGRES_USER=${service.username}`,
 			"-e",

@@ -68,6 +68,31 @@ export function ensureDockerNetwork(networkName: string): void {
 	);
 }
 
+export function ensureContainerOnNetwork(containerName: string, networkName: string): void {
+	const result = spawnSync(
+		"docker",
+		["network", "connect", networkName, containerName],
+		{
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
+
+	if (result.error) {
+		throw result.error;
+	}
+	if (result.status === 0) {
+		return;
+	}
+
+	const stderr = spawnOutput(result.stderr);
+	if (/already exists in network/i.test(stderr) || /endpoint with name .* already exists/i.test(stderr)) {
+		return;
+	}
+
+	throw new Error(`Unable to attach container ${containerName} to network ${networkName}.\n${stderr}`);
+}
+
 export function formatSpawnFailure(result: ReturnType<typeof spawnSync>): string {
 	if (result.error) {
 		return result.error.message;

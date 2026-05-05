@@ -32,10 +32,20 @@ export interface RedisReport {
 	checks: DevServiceCheck[];
 }
 
+export interface NeonHttpProxyReport {
+	containerName: string;
+	image: string;
+	host: string;
+	hostPort: number;
+	networkName: string;
+	checks: DevServiceCheck[];
+}
+
 export interface DevServicesReport {
 	status: "ok" | "fail";
 	project: ProjectReport | null;
 	postgres: PostgresReport | null;
 	redis: RedisReport | null;
+	neonHttpProxy: NeonHttpProxyReport | null;
 	failures: string[];
 }
