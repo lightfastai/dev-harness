@@ -27,7 +27,7 @@ export type {
 	CreateVercelMicrofrontendsDevEnvOptions,
 	DetectWorktreePrefix,
 	Env,
-	GetPortlessMfeDevOriginsOptions,
+	GetPortlessProxyOriginsOptions,
 	GetPortlessUrl,
 	InferLocalAppNamesOptions,
 	MicrofrontendApplicationConfig,

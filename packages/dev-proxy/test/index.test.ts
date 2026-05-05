@@ -11,7 +11,7 @@ import {
 	createVercelMicrofrontendsDevEnv,
 	createVercelMicrofrontendsDevConfig,
 	generateMicrofrontendsPort,
-	getPortlessMfeDevOrigins,
+	getPortlessProxyOrigins,
 	inferLocalAppNames,
 	loadPortlessMfeConfig,
 	resolvePortlessApplicationUrl,
@@ -21,7 +21,7 @@ import {
 	resolveTargetUrl,
 	selectLocalAppNames,
 } from "../src/index.js";
-import { withPortlessMfeDev } from "../src/next.js";
+import { withPortlessProxy } from "../src/next.js";
 import { relatedProjects, resolveProjectUrl, withProject } from "../src/projects.js";
 import {
 	prepareDevCommandEnv,
@@ -160,7 +160,7 @@ test("resolvePortlessMfeRuntime loads config for direct API consumers", () => {
 	assert.equal(identity.name, "lightfast-desktop-fix-ui");
 });
 
-test("withPortlessMfeDev adds config-derived local origins to Next config", () => {
+test("withPortlessProxy adds config-derived local origins to Next config", () => {
 	const root = createFixtureWorkspace();
 	writeJson(path.join(root, "lightfast.dev.json"), {
 		portless: {
@@ -172,7 +172,7 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 		},
 	});
 
-	assert.deepEqual(getPortlessMfeDevOrigins({ cwd: root }), [
+	assert.deepEqual(getPortlessProxyOrigins({ cwd: root }), [
 		"mfe.localhost",
 		"*.mfe.localhost",
 		"app.mfe.localhost",
@@ -182,7 +182,7 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 		"www.mfe.localhost",
 		"*.www.mfe.localhost",
 	]);
-	assert.deepEqual(getPortlessMfeDevOrigins({ cwd: root, includePort: true }), [
+	assert.deepEqual(getPortlessProxyOrigins({ cwd: root, includePort: true }), [
 		"mfe.localhost:1355",
 		"*.mfe.localhost:1355",
 		"app.mfe.localhost:1355",
@@ -192,7 +192,7 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 		"www.mfe.localhost:1355",
 		"*.www.mfe.localhost:1355",
 	]);
-	assert.deepEqual(getPortlessMfeDevOrigins({ cwd: root, includePort: "both" }), [
+	assert.deepEqual(getPortlessProxyOrigins({ cwd: root, includePort: "both" }), [
 		"mfe.localhost",
 		"*.mfe.localhost",
 		"mfe.localhost:1355",
@@ -211,7 +211,7 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 		"*.www.mfe.localhost:1355",
 	]);
 	assert.deepEqual(
-		getPortlessMfeDevOrigins({
+		getPortlessProxyOrigins({
 			cwd: root,
 			env: { PORTLESS_PORT: "2468" },
 			includePort: "both",
@@ -229,7 +229,7 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 		],
 	);
 
-	const wrapped = withPortlessMfeDev(
+	const wrapped = withPortlessProxy(
 		{ allowedDevOrigins: ["custom.localhost"] },
 		{ cwd: root },
 	);
@@ -246,7 +246,7 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 	]);
 
 	assert.deepEqual(
-		withPortlessMfeDev(
+		withPortlessProxy(
 			{ reactStrictMode: true },
 			{ cwd: path.join(os.tmpdir(), "missing-dev-proxy") },
 		),
@@ -254,7 +254,7 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 	);
 
 	const nextConfigLike: NextConfigLike = { reactStrictMode: true };
-	const wrappedNextConfigLike: NextConfigLike = withPortlessMfeDev(
+	const wrappedNextConfigLike: NextConfigLike = withPortlessProxy(
 		nextConfigLike,
 		{ origins: ["typed.localhost"] },
 	);
@@ -264,13 +264,90 @@ test("withPortlessMfeDev adds config-derived local origins to Next config", () =
 	});
 });
 
+test("withPortlessProxy populates serverActions allowedOrigins when serverActions: true", () => {
+	const root = createFixtureWorkspace();
+	writeJson(path.join(root, "lightfast.dev.json"), {
+		portless: {
+			name: "mfe",
+			tld: "localhost",
+		},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+		},
+	});
+
+	const wrapped = withPortlessProxy(
+		{ reactStrictMode: true },
+		{ cwd: root, serverActions: true },
+	) as { reactStrictMode: boolean; allowedDevOrigins?: string[]; experimental?: { serverActions?: { allowedOrigins?: string[] } } };
+
+	assert.deepEqual(wrapped.experimental?.serverActions?.allowedOrigins, [
+		"mfe.localhost",
+		"*.mfe.localhost",
+		"app.mfe.localhost",
+		"*.app.mfe.localhost",
+		"platform.mfe.localhost",
+		"*.platform.mfe.localhost",
+		"www.mfe.localhost",
+		"*.www.mfe.localhost",
+	]);
+	assert.deepEqual(wrapped.allowedDevOrigins, wrapped.experimental?.serverActions?.allowedOrigins);
+});
+
+test("withPortlessProxy serverActions includePort:both populates port-suffixed origins", () => {
+	const root = createFixtureWorkspace();
+	writeJson(path.join(root, "lightfast.dev.json"), {
+		portless: {
+			name: "mfe",
+			tld: "localhost",
+		},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+		},
+	});
+
+	const wrapped = withPortlessProxy(
+		{ reactStrictMode: true },
+		{ cwd: root, serverActions: { includePort: "both" } },
+	) as { experimental?: { serverActions?: { allowedOrigins?: string[] } }; allowedDevOrigins?: string[] };
+
+	const serverActionOrigins = wrapped.experimental?.serverActions?.allowedOrigins ?? [];
+	assert.equal(serverActionOrigins.includes("app.mfe.localhost"), true);
+	assert.equal(serverActionOrigins.includes("app.mfe.localhost:1355"), true);
+	assert.equal(serverActionOrigins.includes("*.app.mfe.localhost"), true);
+	assert.equal(serverActionOrigins.includes("*.app.mfe.localhost:1355"), true);
+
+	assert.equal((wrapped.allowedDevOrigins ?? []).includes("app.mfe.localhost"), true);
+	assert.equal((wrapped.allowedDevOrigins ?? []).includes("app.mfe.localhost:1355"), false);
+});
+
+test("withPortlessProxy leaves experimental untouched when serverActions is omitted", () => {
+	const root = createFixtureWorkspace();
+	writeJson(path.join(root, "lightfast.dev.json"), {
+		portless: {
+			name: "mfe",
+			tld: "localhost",
+		},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+		},
+	});
+
+	const wrapped = withPortlessProxy(
+		{ reactStrictMode: true },
+		{ cwd: root },
+	) as { experimental?: unknown };
+
+	assert.equal("experimental" in wrapped, false);
+});
+
 test("CommonJS Next wrapper exports the same helpers", () => {
 	const cjsNext = require("../src/next.cjs") as typeof import("../src/next.js");
 
-	assert.equal(typeof cjsNext.withPortlessMfeDev, "function");
-	assert.equal(typeof cjsNext.getPortlessMfeDevOrigins, "function");
+	assert.equal(typeof cjsNext.withPortlessProxy, "function");
+	assert.equal(typeof cjsNext.getPortlessProxyOrigins, "function");
 	assert.deepEqual(
-		cjsNext.withPortlessMfeDev(
+		cjsNext.withPortlessProxy(
 			{ allowedDevOrigins: ["custom.localhost"] },
 			{ origins: ["mfe.localhost"] },
 		).allowedDevOrigins,
@@ -287,7 +364,7 @@ test("package export map supports intended ESM imports", () => {
 			const nextApi = await import("@lightfastai/dev-proxy/next");
 			const projectApi = await import("@lightfastai/dev-proxy/projects");
 			if (typeof publicApi.resolvePortlessMfeRuntime !== "function") throw new Error("missing public API");
-			if (typeof nextApi.withPortlessMfeDev !== "function") throw new Error("missing next API");
+			if (typeof nextApi.withPortlessProxy !== "function") throw new Error("missing next API");
 			if (typeof projectApi.resolveProjectUrl !== "function") throw new Error("missing projects API");
 		`,
 	]);
@@ -300,7 +377,7 @@ test("package export map supports CommonJS require for Next helpers", () => {
 		"--eval",
 		`
 			const nextApi = require("@lightfastai/dev-proxy/next");
-			if (typeof nextApi.withPortlessMfeDev !== "function") throw new Error("missing next API");
+			if (typeof nextApi.withPortlessProxy !== "function") throw new Error("missing next API");
 		`,
 	]);
 

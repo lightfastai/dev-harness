@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 import { withMicrofrontends } from "@vercel/microfrontends/next/config";
-import { withPortlessMfeDev } from "@lightfastai/dev-proxy/next";
+import { withPortlessProxy } from "@lightfastai/dev-proxy/next";
 
 const nextConfig: NextConfig = {
 	transpilePackages: [
@@ -10,4 +10,4 @@ const nextConfig: NextConfig = {
 	],
 };
 
-export default withPortlessMfeDev(withMicrofrontends(nextConfig));
+export default withPortlessProxy(withMicrofrontends(nextConfig));

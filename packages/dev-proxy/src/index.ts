@@ -124,7 +124,7 @@ export interface ResolvePortlessApplicationUrlOptions extends ResolvePortlessUrl
 	sourceConfig?: MicrofrontendsSourceConfig;
 }
 
-export interface GetPortlessMfeDevOriginsOptions {
+export interface GetPortlessProxyOriginsOptions {
 	name?: string;
 	tld?: string;
 	cwd?: string;
@@ -514,7 +514,7 @@ export function resolvePortlessApplicationUrl({
 	});
 }
 
-export function getPortlessMfeDevOrigins({
+export function getPortlessProxyOrigins({
 	name,
 	tld,
 	cwd = process.cwd(),
@@ -524,7 +524,7 @@ export function getPortlessMfeDevOrigins({
 	includeWildcard = true,
 	includePort = false,
 	allowMissingConfig = false,
-}: GetPortlessMfeDevOriginsOptions = {}): string[] {
+}: GetPortlessProxyOriginsOptions = {}): string[] {
 	const normalized = resolveOptionalPackageConfigForApi({ cwd, config, configPath });
 
 	if (!normalized && !name) {

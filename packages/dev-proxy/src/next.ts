@@ -1,37 +1,69 @@
-import { getPortlessMfeDevOrigins } from "./index.js";
-import type { GetPortlessMfeDevOriginsOptions } from "./index.js";
+import { getPortlessProxyOrigins } from "./index.js";
+import type { GetPortlessProxyOriginsOptions } from "./index.js";
 
-export interface NextConfigWithPortlessMfeDev {
+export interface NextConfigWithPortlessProxy {
 	allowedDevOrigins?: string[];
+	experimental?: {
+		serverActions?: {
+			allowedOrigins?: string[];
+			[key: string]: unknown;
+		};
+		[key: string]: unknown;
+	};
 }
 
-export interface WithPortlessMfeDevOptions extends GetPortlessMfeDevOriginsOptions {
+export interface WithPortlessProxyOptions extends GetPortlessProxyOriginsOptions {
 	origins?: string[];
+	serverActions?: boolean | { includePort?: boolean | "both" };
 }
 
-export function withPortlessMfeDev<T extends object = object>(
-	nextConfig: T & NextConfigWithPortlessMfeDev = {} as T & NextConfigWithPortlessMfeDev,
-	options: WithPortlessMfeDevOptions = {},
-): T & NextConfigWithPortlessMfeDev {
-	const origins = options.origins ?? getPortlessMfeDevOrigins({
-		...options,
+export function withPortlessProxy<T extends object = object>(
+	nextConfig: T & NextConfigWithPortlessProxy = {} as T & NextConfigWithPortlessProxy,
+	options: WithPortlessProxyOptions = {},
+): T & NextConfigWithPortlessProxy {
+	const { serverActions, origins: providedOrigins, ...originOptions } = options;
+
+	const devOrigins = providedOrigins ?? getPortlessProxyOrigins({
+		...originOptions,
 		allowMissingConfig: true,
 	});
 
-	if (!origins.length) {
+	if (!devOrigins.length) {
 		return nextConfig;
 	}
 
-	return {
+	const next: T & NextConfigWithPortlessProxy = {
 		...nextConfig,
 		allowedDevOrigins: unique([
 			...(nextConfig.allowedDevOrigins ?? []),
-			...origins,
+			...devOrigins,
 		]),
-	} as T & NextConfigWithPortlessMfeDev;
+	};
+
+	if (serverActions) {
+		const includePort = typeof serverActions === "object" ? serverActions.includePort : false;
+		const serverActionOrigins = providedOrigins ?? getPortlessProxyOrigins({
+			...originOptions,
+			allowMissingConfig: true,
+			includePort,
+		});
+
+		next.experimental = {
+			...nextConfig.experimental,
+			serverActions: {
+				...nextConfig.experimental?.serverActions,
+				allowedOrigins: unique([
+					...(nextConfig.experimental?.serverActions?.allowedOrigins ?? []),
+					...serverActionOrigins,
+				]),
+			},
+		};
+	}
+
+	return next;
 }
 
-export { getPortlessMfeDevOrigins };
+export { getPortlessProxyOrigins };
 
 function unique(values: string[]): string[] {
 	return Array.from(new Set(values.filter(Boolean)));

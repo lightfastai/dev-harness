@@ -27,6 +27,13 @@ type PackageConfig = {
 };
 type NextConfig = {
 	allowedDevOrigins?: string[];
+	experimental?: {
+		serverActions?: {
+			allowedOrigins?: string[];
+			[key: string]: any;
+		};
+		[key: string]: any;
+	};
 	[key: string]: any;
 };
 type OriginsOptions = {
@@ -40,31 +47,56 @@ type OriginsOptions = {
 	includePort?: boolean | "both";
 	allowMissingConfig?: boolean;
 	origins?: string[];
+	serverActions?: boolean | { includePort?: boolean | "both" };
 };
 
-function withPortlessMfeDev<T extends NextConfig>(
+function withPortlessProxy<T extends NextConfig>(
 	nextConfig: T = {} as T,
 	options: OriginsOptions = {},
 ): T {
-	const origins = options.origins ?? getPortlessMfeDevOrigins({
-		...options,
+	const { serverActions, origins: providedOrigins, ...originOptions } = options;
+
+	const devOrigins = providedOrigins ?? getPortlessProxyOrigins({
+		...originOptions,
 		allowMissingConfig: true,
 	});
 
-	if (!origins.length) {
+	if (!devOrigins.length) {
 		return nextConfig;
 	}
 
-	return {
+	const next: T = {
 		...nextConfig,
 		allowedDevOrigins: unique([
 			...(nextConfig.allowedDevOrigins ?? []),
-			...origins,
+			...devOrigins,
 		]),
 	} as T;
+
+	if (serverActions) {
+		const includePort = typeof serverActions === "object" ? serverActions.includePort : false;
+		const serverActionOrigins = providedOrigins ?? getPortlessProxyOrigins({
+			...originOptions,
+			allowMissingConfig: true,
+			includePort,
+		});
+
+		next.experimental = {
+			...nextConfig.experimental,
+			serverActions: {
+				...nextConfig.experimental?.serverActions,
+				allowedOrigins: unique([
+					...(nextConfig.experimental?.serverActions?.allowedOrigins ?? []),
+					...serverActionOrigins,
+				]),
+			},
+		};
+	}
+
+	return next;
 }
 
-function getPortlessMfeDevOrigins({
+function getPortlessProxyOrigins({
 	name,
 	tld,
 	cwd = process.cwd(),
@@ -253,6 +285,6 @@ function unique<T>(values: Array<T | undefined | null | false | "">): T[] {
 }
 
 module.exports = {
-	getPortlessMfeDevOrigins,
-	withPortlessMfeDev,
+	getPortlessProxyOrigins,
+	withPortlessProxy,
 };

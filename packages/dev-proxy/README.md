@@ -50,10 +50,12 @@ Next.js exports:
 
 ```ts
 import {
-  getPortlessMfeDevOrigins,
-  withPortlessMfeDev,
+  getPortlessProxyOrigins,
+  withPortlessProxy,
 } from "@lightfastai/dev-proxy/next";
 ```
+
+`withPortlessProxy` populates `allowedDevOrigins` for HMR. Pass `{ serverActions: true }` to also append origins to `experimental.serverActions.allowedOrigins` (browsers strip `:443` from HTTPS Origin headers, so the bare-host variant is enough by default). Pass `{ serverActions: { includePort: "both" } }` to include both port and no-port variants on the Server Actions surface.
 
 Project URL helpers:
 
