@@ -45,7 +45,6 @@
     "prepack": "pnpm run clean:dist && pnpm run build",
     "pack:check": "pnpm run clean:dist && pnpm run build && node scripts/check-pack.mjs",
     "release:check": "pnpm run typecheck && pnpm run test && pnpm run pack:check",
-    "prepublishOnly": "pnpm run release:check",
     "publish:dry-run": "npm publish --dry-run",
     "publish:npm": "npm publish",
     "test": "pnpm run build && rm -rf .turbo/test-dist && tsc -p tsconfig.test.json && node --test .turbo/test-dist/test/*.test.js",

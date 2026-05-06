@@ -47,6 +47,9 @@ jobs:
       - name: Test publishable packages
         run: pnpm turbo test --filter='@lightfastai/dev-*'
 
+      - name: Pack check (validates published tarball contents)
+        run: pnpm turbo pack:check --filter='@lightfastai/dev-*'
+
       - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1
