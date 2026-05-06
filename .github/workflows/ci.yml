@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck publishable packages
+        run: pnpm turbo typecheck --filter='@lightfastai/dev-*'
+
+      - name: Build publishable packages
+        run: pnpm turbo build --filter='@lightfastai/dev-*'
+
+      - name: Test publishable packages
+        run: pnpm turbo test --filter='@lightfastai/dev-*'
+
+      - name: Validate package contents (pack-check)
+        run: |
+          for pkg in dev-core dev-proxy dev-services dev-cli; do
+            echo "::group::pack-check $pkg"
+            pnpm --filter "@lightfastai/$pkg" run pack:check
+            echo "::endgroup::"
+          done

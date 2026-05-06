@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.changeset/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Configure git user
+        run: |
+          git config --global user.name 'lightfast-release-bot'
+          git config --global user.email 'releases@lightfast.ai'
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.LIGHTFAST_RELEASE_BOT_GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm changeset status
+
+      - name: Build publishable packages
+        run: pnpm turbo build --filter='@lightfastai/dev-*'
+
+      - name: Test publishable packages
+        run: pnpm turbo test --filter='@lightfastai/dev-*'
+
+      - name: Create Release Pull Request or Publish to npm
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          publish: pnpm changeset publish
+          setupGitUser: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.LIGHTFAST_RELEASE_BOT_GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.LIGHTFAST_RELEASE_BOT_NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+
+      - name: Verify published versions are aligned
+        if: steps.changesets.outputs.published == 'true'
+        run: |
+          sleep 10
+          CLI=$(npm view @lightfastai/dev-cli version)
+          CORE=$(npm view @lightfastai/dev-core version)
+          PROXY=$(npm view @lightfastai/dev-proxy version)
+          SERVICES=$(npm view @lightfastai/dev-services version)
+          echo "dev-cli=$CLI dev-core=$CORE dev-proxy=$PROXY dev-services=$SERVICES"
+          if [ "$CLI" != "$CORE" ] || [ "$CLI" != "$PROXY" ] || [ "$CLI" != "$SERVICES" ]; then
+            echo "::error::Fixed group version drift detected — manual reconciliation required"
+            exit 1
+          fi
+          echo "✅ All four packages aligned at $CLI"

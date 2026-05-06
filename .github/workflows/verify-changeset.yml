@@ -1,0 +1,61 @@
+name: Verify Changesets
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+    paths:
+      - '.changeset/*.md'
+
+jobs:
+  verify-changesets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Get changed changeset files
+        id: changeset-files
+        run: |
+          files=$(git diff --diff-filter=dr --name-only "$BASE_SHA" -- '.changeset/*.md' \
+            | grep -v '/README.md$' \
+            | tr '\n' ' ')
+          echo "changed-files=$files" >> "$GITHUB_OUTPUT"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+      - name: Verify changeset format
+        if: steps.changeset-files.outputs.changed-files != ''
+        run: |
+          fail=0
+          for file in ${{ steps.changeset-files.outputs.changed-files }}; do
+            echo "Checking $file..."
+            if [ ! -f "$file" ]; then
+              echo "::error::Changeset file $file not found"
+              fail=1; continue
+            fi
+
+            if ! grep -qE '"@lightfastai/dev-(cli|core|proxy|services)"' "$file"; then
+              echo "::error::$file must reference at least one of @lightfastai/dev-{cli,core,proxy,services}"
+              fail=1
+            fi
+
+            if ! grep -E '^"@lightfastai/dev-(cli|core|proxy|services)": (patch|minor|major)$' "$file" > /dev/null; then
+              echo "::error::$file must use patch|minor|major for a @lightfastai/dev-* package"
+              fail=1
+            fi
+
+            if ! grep -A 5 '^---$' "$file" | tail -n +2 | grep -v '^---$' | grep -q '.'; then
+              echo "::error::$file must include a non-empty summary"
+              fail=1
+            fi
+
+            echo "✓ $file"
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "All changesets valid."

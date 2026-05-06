@@ -1,5 +1,5 @@
 {
-  "name": "mfe-sandbox",
+  "name": "dev-harness",
   "private": true,
   "packageManager": "pnpm@10.32.1",
   "engines": {
@@ -21,18 +21,11 @@
     "dev:doctor": "lightfast-dev doctor --postgres-table example_probe_events",
     "premfe:url": "pnpm --filter @lightfastai/dev-cli build",
     "mfe:url": "lightfast-dev proxy url",
-    "dev-core:release:check": "pnpm --filter @lightfastai/dev-core run release:check",
-    "dev-core:publish:dry-run": "pnpm --filter @lightfastai/dev-core run publish:dry-run",
-    "dev-core:publish": "pnpm --filter @lightfastai/dev-core run publish:npm",
-    "dev-services:release:check": "pnpm --filter @lightfastai/dev-services run release:check",
-    "dev-services:publish:dry-run": "pnpm --filter @lightfastai/dev-services run publish:dry-run",
-    "dev-services:publish": "pnpm --filter @lightfastai/dev-services run publish:npm",
-    "dev-proxy:release:check": "pnpm --filter @lightfastai/dev-proxy run release:check",
-    "dev-proxy:publish:dry-run": "pnpm --filter @lightfastai/dev-proxy run publish:dry-run",
-    "dev-proxy:publish": "pnpm --filter @lightfastai/dev-proxy run publish:npm",
-    "dev-cli:release:check": "pnpm --filter @lightfastai/dev-cli run release:check",
-    "dev-cli:publish:dry-run": "pnpm --filter @lightfastai/dev-cli run publish:dry-run",
-    "dev-cli:publish": "pnpm --filter @lightfastai/dev-cli run publish:npm",
+    "build": "turbo run build --filter='@lightfastai/dev-*'",
+    "test": "turbo run test --filter='@lightfastai/dev-*'",
+    "release:check": "turbo run typecheck test --filter='@lightfastai/dev-*' && pnpm changeset status",
+    "changeset": "changeset",
+    "changeset:status": "changeset status --verbose",
     "db:url": "lightfast-dev postgres url",
     "db:up": "lightfast-dev postgres up",
     "db:create": "lightfast-dev postgres create",
@@ -45,6 +38,7 @@
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@lightfastai/dev-cli": "workspace:*",
     "@lightfastai/dev-core": "workspace:*",
     "@lightfastai/dev-services": "workspace:*",

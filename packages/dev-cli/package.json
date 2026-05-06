@@ -1,14 +1,25 @@
 {
   "name": "@lightfastai/dev-cli",
-  "version": "0.1.2",
+  "version": "0.2.1",
   "description": "Thin CLI harness for Lightfast local development APIs.",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "author": "Lightfast <hello@lightfast.ai>",
+  "homepage": "https://github.com/lightfastai/dev-harness#readme",
+  "bugs": {
+    "url": "https://github.com/lightfastai/dev-harness/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lightfastai/dev-harness.git",
+    "directory": "packages/dev-cli"
+  },
   "type": "module",
   "main": "./dist/public.js",
   "types": "./dist/public.d.ts",
   "files": [
     "bin",
     "dist",
+    "LICENSE",
     "README.md"
   ],
   "bin": {
@@ -42,9 +53,9 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@lightfastai/dev-core": "workspace:^0.1.1",
-    "@lightfastai/dev-proxy": "workspace:^0.1.19",
-    "@lightfastai/dev-services": "workspace:^0.1.6"
+    "@lightfastai/dev-core": "workspace:*",
+    "@lightfastai/dev-proxy": "workspace:*",
+    "@lightfastai/dev-services": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

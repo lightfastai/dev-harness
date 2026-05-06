@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [
+    [
+      "@lightfastai/dev-cli",
+      "@lightfastai/dev-core",
+      "@lightfastai/dev-proxy",
+      "@lightfastai/dev-services"
+    ]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [
+    "@example/app",
+    "@example/www",
+    "@example/desktop",
+    "@example/db-app",
+    "@example/vendor-db",
+    "@example/vendor-upstash"
+  ]
+}
