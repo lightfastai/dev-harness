@@ -66,7 +66,7 @@ jobs:
         if: steps.detect.outputs.has_changeset == 'true'
         run: pnpm changeset publish --tag ${{ steps.tag.outputs.tag }} --no-git-tag
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.LIGHTFAST_RELEASE_BOT_NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
 
       - name: Comment install instructions on PR

@@ -58,10 +58,9 @@ jobs:
           # Default GITHUB_TOKEN works for opening the Version Packages PR
           # and pushing commits within this repo. Caveat: bot-pushed commits
           # do not auto-trigger CI runs — re-trigger via gh workflow run if
-          # needed. Swap to LIGHTFAST_RELEASE_BOT_GITHUB_TOKEN once that org
-          # secret is repaired (currently 401 Bad credentials org-wide).
+          # needed.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.LIGHTFAST_RELEASE_BOT_NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
 
       - name: Verify published versions are aligned
