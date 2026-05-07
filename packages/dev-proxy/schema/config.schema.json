@@ -4,6 +4,7 @@
   "title": "Lightfast Dev Config",
   "type": "object",
   "additionalProperties": false,
+  "required": ["apps"],
   "properties": {
     "$schema": {
       "type": "string"
@@ -30,6 +31,37 @@
         }
       }
     },
+    "apps": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["packageName", "devPort", "mfe"],
+        "properties": {
+          "packageName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "devPort": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "portlessName": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fallback": {
+            "type": "string",
+            "format": "uri"
+          },
+          "mfe": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
     "microfrontends": {
       "type": "object",
       "additionalProperties": false,
@@ -37,35 +69,6 @@
         "config": {
           "type": "string",
           "minLength": 1
-        },
-        "apps": {
-          "type": "object",
-          "additionalProperties": {
-            "oneOf": [
-              {
-                "type": "string",
-                "minLength": 1
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "dir": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "path": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "portlessName": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
-            ]
-          }
         },
         "proxyPortRange": {
           "$ref": "#/$defs/portRange"

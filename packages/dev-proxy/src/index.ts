@@ -28,6 +28,29 @@ export type ApplicationOverride =
 			portlessName?: string;
 		};
 
+export interface AppRegistryEntryConfig {
+	packageName: string;
+	devPort: number;
+	portlessName?: string;
+	fallback?: string;
+	mfe: boolean;
+}
+
+export interface AppEntry {
+	name: string;
+	packageName: string;
+	devPort: number;
+	portlessName: string;
+	fallback: string;
+	mfe: boolean;
+	routing?: unknown[];
+}
+
+export interface AppRegistry {
+	entries: AppEntry[];
+	byName: Record<string, AppEntry>;
+}
+
 export interface PortlessMfeConfig {
 	root?: string;
 	configPath?: string;
@@ -37,9 +60,9 @@ export interface PortlessMfeConfig {
 		https?: boolean;
 		tld?: string;
 	};
+	apps?: Record<string, AppRegistryEntryConfig>;
 	microfrontends?: {
 		config?: string;
-		apps?: Record<string, ApplicationOverride>;
 		proxyPortRange?: PortRange;
 	};
 	[key: string]: unknown;
@@ -54,9 +77,9 @@ export interface NormalizedPortlessMfeConfig {
 		https: boolean;
 		tld: string;
 	};
+	apps: Record<string, AppRegistryEntryConfig>;
 	microfrontends: {
 		config: string;
-		apps: Record<string, ApplicationOverride>;
 		proxyPortRange: NormalizedPortRange;
 	};
 }
@@ -121,7 +144,6 @@ export interface ResolvePortlessMfeRuntimeOptions extends ResolvePortlessUrlOpti
 
 export interface ResolvePortlessApplicationUrlOptions extends ResolvePortlessUrlOptions {
 	app: string;
-	sourceConfig?: MicrofrontendsSourceConfig;
 }
 
 export interface GetPortlessProxyOriginsOptions {
@@ -164,6 +186,7 @@ export interface VercelMicrofrontendsDevConfigResult {
 }
 
 export interface InferLocalAppNamesOptions {
+	registry?: AppRegistry;
 	applications?: Record<string, MicrofrontendApplicationConfig>;
 	requestedApps?: string[];
 	commandArgs?: string[];
@@ -214,6 +237,9 @@ const DEFAULT_PORTLESS_PORT = 1355;
 const DEFAULT_PORTLESS_NAME = "mfe";
 const DEFAULT_PORTLESS_TLD = "localhost";
 const DEFAULT_MFE_APP_PORT_RANGE = { min: 3000, max: 8000 };
+const DEFAULT_APP_FALLBACK = "https://lightfast.ai";
+const APP_REGISTRY_REQUIRED_MESSAGE =
+	"lightfast.dev.json must declare a non-empty 'apps' registry; deriving from microfrontends.json is no longer supported in dev-proxy@0.3.0+.";
 
 const RESERVED_PORTS = new Set([
 	0,
@@ -327,6 +353,109 @@ export function loadPortlessMfeConfigSync({
 		configPath: resolvedPath,
 		root: path.dirname(resolvedPath),
 	});
+}
+
+export function loadAppRegistry(
+	config: PortlessMfeConfig | NormalizedPortlessMfeConfig,
+): AppRegistry {
+	const normalized = normalizePackageConfig(config, {
+		root: config.root ?? process.cwd(),
+		configPath: config.configPath,
+	});
+
+	const rawApps = normalized.apps;
+	if (!rawApps || Object.keys(rawApps).length === 0) {
+		throw new Error(APP_REGISTRY_REQUIRED_MESSAGE);
+	}
+
+	const routingByName = readMicrofrontendsRoutingByName(normalized);
+
+	const entries: AppEntry[] = [];
+	const byName: Record<string, AppEntry> = {};
+
+	for (const [name, raw] of Object.entries(rawApps)) {
+		validateAppRegistryEntry(name, raw);
+		const portlessName = raw.portlessName
+			? normalizePortlessName(raw.portlessName)
+			: normalizePortlessName(`${packageShortName(raw.packageName)}.${normalized.portless.name}`);
+		const fallback = raw.fallback ?? DEFAULT_APP_FALLBACK;
+		const routing = raw.mfe ? routingByName[name] : undefined;
+		const entry: AppEntry = {
+			name,
+			packageName: raw.packageName,
+			devPort: raw.devPort,
+			portlessName,
+			fallback,
+			mfe: raw.mfe,
+			...(routing ? { routing } : {}),
+		};
+		entries.push(entry);
+		byName[name] = entry;
+	}
+
+	return { entries, byName };
+}
+
+export function synthesizeApplicationsFromRegistry(
+	registry: AppRegistry,
+): Record<string, MicrofrontendApplicationConfig> {
+	return Object.fromEntries(
+		registry.entries
+			.filter((entry) => entry.mfe)
+			.map((entry) => {
+				const config: MicrofrontendApplicationConfig = {
+					packageName: entry.packageName,
+					development: { fallback: entry.fallback },
+				};
+				if (entry.routing) {
+					(config as { routing?: unknown[] }).routing = entry.routing;
+				}
+				return [entry.name, config];
+			}),
+	);
+}
+
+function validateAppRegistryEntry(name: string, raw: AppRegistryEntryConfig): void {
+	if (!raw || typeof raw !== "object") {
+		throw new Error(`apps.${name} must be an object.`);
+	}
+	if (typeof raw.packageName !== "string" || !raw.packageName.trim()) {
+		throw new Error(`apps.${name}.packageName must be a non-empty string.`);
+	}
+	if (
+		typeof raw.devPort !== "number" ||
+		!Number.isInteger(raw.devPort) ||
+		raw.devPort < 1 ||
+		raw.devPort > 65535
+	) {
+		throw new Error(`apps.${name}.devPort must be an integer between 1 and 65535.`);
+	}
+	if (typeof raw.mfe !== "boolean") {
+		throw new Error(`apps.${name}.mfe must be a boolean.`);
+	}
+}
+
+function readMicrofrontendsRoutingByName(
+	config: NormalizedPortlessMfeConfig,
+): Record<string, unknown[]> {
+	const sourcePath = path.resolve(config.root, config.microfrontends.config);
+	if (!fs.existsSync(sourcePath)) {
+		return {};
+	}
+	let parsed: MicrofrontendsSourceConfig;
+	try {
+		parsed = JSON.parse(fs.readFileSync(sourcePath, "utf8")) as MicrofrontendsSourceConfig;
+	} catch {
+		return {};
+	}
+	const routingByName: Record<string, unknown[]> = {};
+	for (const [appName, appConfig] of Object.entries(parsed.applications ?? {})) {
+		const routing = (appConfig as { routing?: unknown }).routing;
+		if (Array.isArray(routing)) {
+			routingByName[appName] = routing;
+		}
+	}
+	return routingByName;
 }
 
 export function resolvePortlessUrl({
@@ -474,7 +603,7 @@ export function resolvePortlessMfeRuntime({
 	});
 }
 
-export function resolvePortlessApplicationUrl({
+export function resolvePortlessAppUrl({
 	app,
 	path: targetPath,
 	targetUrl,
@@ -482,27 +611,25 @@ export function resolvePortlessApplicationUrl({
 	env = process.env,
 	config,
 	configPath,
-	sourceConfig,
 	getPortlessUrl = defaultGetPortlessUrl,
 	detectWorktreePrefix = defaultDetectWorktreePrefix,
 }: ResolvePortlessApplicationUrlOptions): string {
 	if (!app) {
-		throw new Error("resolvePortlessApplicationUrl requires an app name.");
+		throw new Error("resolvePortlessAppUrl requires an app name.");
 	}
 
 	const normalized = resolvePackageConfigForApi({ cwd, config, configPath });
-	const resolvedSourceConfig = sourceConfig ?? readMicrofrontendsConfig(normalized);
-	const applications = resolvedSourceConfig.applications ?? {};
-	const appName = resolveRequestedApplicationName(applications, app);
+	const registry = loadAppRegistry(normalized);
+	const entry = resolveRegistryEntry(registry, app);
 
-	if (!appName) {
+	if (!entry) {
 		throw new Error(
-			`Unknown app "${app}". Available apps: ${Object.keys(applications).join(", ")}`,
+			`Unknown app "${app}". Available apps: ${registry.entries.map((e) => e.name).join(", ")}`,
 		);
 	}
 
 	return resolvePortlessUrl({
-		name: resolveApplicationPortlessName(appName, applications[appName], normalized),
+		name: entry.portlessName,
 		path: targetPath,
 		targetUrl,
 		cwd: normalized.root,
@@ -513,6 +640,8 @@ export function resolvePortlessApplicationUrl({
 		preferCurrentPortlessUrl: false,
 	});
 }
+
+export const resolvePortlessApplicationUrl = resolvePortlessAppUrl;
 
 export function getPortlessProxyOrigins({
 	name,
@@ -544,16 +673,15 @@ export function getPortlessProxyOrigins({
 	const portlessNames = [portlessName];
 
 	if (normalized) {
-		const sourceConfig = readMicrofrontendsConfigIfAvailable(normalized);
-		const originConfig = {
-			...normalized,
-			portless: {
-				...normalized.portless,
-				name: portlessName,
-			},
-		};
-		for (const [appName, appConfig] of Object.entries(sourceConfig?.applications ?? {})) {
-			portlessNames.push(resolveApplicationPortlessName(appName, appConfig, originConfig));
+		try {
+			const registry = loadAppRegistry(normalized);
+			for (const entry of registry.entries) {
+				portlessNames.push(entry.portlessName);
+			}
+		} catch (error) {
+			if (!allowMissingConfig) {
+				throw error;
+			}
 		}
 	}
 
@@ -584,12 +712,16 @@ export async function createVercelMicrofrontendsDevConfig({
 }: CreateVercelMicrofrontendsDevConfigOptions = {}): Promise<VercelMicrofrontendsDevConfigResult> {
 	const normalized = normalizePackageConfig(config ?? {}, { root: cwd });
 	const mfeConfigOptions = normalized.microfrontends;
+	const registry = loadAppRegistry(normalized);
+	const mfeEntries = registry.entries.filter((entry) => entry.mfe);
 	const sourcePath = path.resolve(
 		normalized.root,
 		sourceConfigPath ?? mfeConfigOptions.config,
 	);
 	const generatedPath = path.join(path.dirname(sourcePath), RUNTIME_CONFIG_FILENAME);
-	const sourceConfig = JSON.parse(fs.readFileSync(sourcePath, "utf8")) as MicrofrontendsSourceConfig;
+	const sourceConfig: MicrofrontendsSourceConfig = {
+		applications: synthesizeApplicationsFromRegistry(registry),
+	};
 	const host = resolvePortlessHost({
 		name: normalized.portless.name,
 		cwd: normalized.root,
@@ -598,8 +730,6 @@ export async function createVercelMicrofrontendsDevConfig({
 		getPortlessUrl,
 		detectWorktreePrefix,
 	});
-	const tld = env.PORTLESS_TLD || normalized.portless.tld;
-	const baseHost = `${normalized.portless.name}.${tld}`;
 	const localProxyPort = await resolveLocalProxyPort(host, {
 		env,
 		range: mfeConfigOptions.proxyPortRange,
@@ -609,13 +739,13 @@ export async function createVercelMicrofrontendsDevConfig({
 	const resolvedAppDirs = resolveApplicationDirectories({
 		root: normalized.root,
 		applications,
-		overrides: appDirs ?? mfeConfigOptions.apps,
+		overrides: appDirs,
 	});
 	const appUrls = Object.fromEntries(
-		Object.entries(applications).map(([appName, appConfig]) => [
-			appName,
+		mfeEntries.map((entry) => [
+			entry.name,
 			resolvePortlessUrl({
-				name: resolveApplicationPortlessName(appName, appConfig, normalized),
+				name: entry.portlessName,
 				cwd: normalized.root,
 				env,
 				config: normalized,
@@ -625,15 +755,7 @@ export async function createVercelMicrofrontendsDevConfig({
 			}),
 		]),
 	);
-	const usedAppPorts = new Set<number>();
-	const appPorts = Object.fromEntries(
-		Object.keys(applications).map((appName) => {
-			const seed = host === baseHost ? appName : `${host}:${appName}`;
-			const port = generateMicrofrontendsPort(seed, { usedPorts: usedAppPorts });
-			usedAppPorts.add(port);
-			return [appName, port];
-		}),
-	);
+	const appPorts = Object.fromEntries(mfeEntries.map((entry) => [entry.name, entry.devPort]));
 	const appLocalUrls = Object.fromEntries(
 		Object.entries(appUrls).map(([appName, appUrl]) => [
 			appName,
@@ -793,6 +915,7 @@ export function normalizePackageConfig(
 ): NormalizedPortlessMfeConfig {
 	const portless = rawConfig?.portless ?? {};
 	const microfrontends = rawConfig?.microfrontends ?? {};
+	const apps = (rawConfig as PortlessMfeConfig)?.apps ?? {};
 
 	return {
 		root,
@@ -803,9 +926,9 @@ export function normalizePackageConfig(
 			https: Boolean(portless.https),
 			tld: portless.tld ?? DEFAULT_PORTLESS_TLD,
 		},
+		apps,
 		microfrontends: {
 			config: microfrontends.config ?? "microfrontends.json",
-			apps: microfrontends.apps ?? {},
 			proxyPortRange: {
 				min: parsePort(microfrontends.proxyPortRange?.min) ?? DEFAULT_PROXY_PORT_RANGE.min,
 				max: parsePort(microfrontends.proxyPortRange?.max) ?? DEFAULT_PROXY_PORT_RANGE.max,
@@ -850,6 +973,7 @@ export function selectLocalAppNames(
 }
 
 export function inferLocalAppNames({
+	registry,
 	applications,
 	requestedApps = [],
 	commandArgs = [],
@@ -858,17 +982,25 @@ export function inferLocalAppNames({
 	root = process.cwd(),
 	env = process.env,
 }: InferLocalAppNamesOptions = {}): string[] {
+	const effectiveApplications = registry
+		? Object.fromEntries(
+				registry.entries.map((entry) => [
+					entry.name,
+					{ packageName: entry.packageName } satisfies MicrofrontendApplicationConfig,
+				]),
+			)
+		: applications;
 	const envApps = parseList(env.PORTLESS_MFE_LOCAL_APPS);
 	const explicitApps = requestedApps.length ? requestedApps : envApps;
 
 	if (explicitApps.length) {
-		return selectLocalAppNames(applications, explicitApps);
+		return selectLocalAppNames(effectiveApplications, explicitApps);
 	}
 
 	const filteredApps = extractCommandFilters(commandArgs)
 		.map((filter) => resolveFilterToApplicationName(filter, { appDirs, root }) ?? filter);
 	if (filteredApps.length) {
-		return selectLocalAppNames(applications, filteredApps);
+		return selectLocalAppNames(effectiveApplications, filteredApps);
 	}
 
 	const cwdApp = resolveCwdApplicationName({ appDirs, cwd });
@@ -876,7 +1008,7 @@ export function inferLocalAppNames({
 		return [cwdApp];
 	}
 
-	return selectLocalAppNames(applications);
+	return selectLocalAppNames(effectiveApplications);
 }
 
 export function createVercelMicrofrontendsDevEnv({
@@ -1209,32 +1341,34 @@ export function resolveApplicationPortlessName(
 	config: PortlessMfeConfig | NormalizedPortlessMfeConfig = {},
 ): string {
 	const normalized = normalizePackageConfig(config, { root: config.root ?? process.cwd() });
-	const override = normalizeApplicationOverride(normalized.microfrontends.apps?.[appName]);
-	if (override.portlessName) {
-		return normalizePortlessName(override.portlessName);
+	const rawEntry = normalized.apps?.[appName];
+	if (rawEntry?.portlessName) {
+		return normalizePortlessName(rawEntry.portlessName);
 	}
 
-	const packageName = appConfig.packageName ?? appName;
+	const packageName = rawEntry?.packageName ?? appConfig.packageName ?? appName;
 	const shortName = packageShortName(packageName);
 	return normalizePortlessName(`${shortName}.${normalized.portless.name}`);
 }
 
-function readMicrofrontendsConfig(
-	config: PortlessMfeConfig | NormalizedPortlessMfeConfig,
-): MicrofrontendsSourceConfig {
-	const normalized = normalizePackageConfig(config, { root: config.root ?? process.cwd() });
-	const sourcePath = path.resolve(normalized.root, normalized.microfrontends.config);
-	return JSON.parse(fs.readFileSync(sourcePath, "utf8"));
-}
-
-function readMicrofrontendsConfigIfAvailable(
-	config: PortlessMfeConfig | NormalizedPortlessMfeConfig,
-): MicrofrontendsSourceConfig | undefined {
-	try {
-		return readMicrofrontendsConfig(config);
-	} catch {
-		return undefined;
+export function resolveRegistryEntry(
+	registry: AppRegistry,
+	requested: string,
+): AppEntry | undefined {
+	if (Object.hasOwn(registry.byName, requested)) {
+		return registry.byName[requested];
 	}
+
+	const matches = registry.entries.filter((entry) => {
+		const packageName = entry.packageName;
+		return packageName === requested || packageShortName(packageName) === requested;
+	});
+
+	if (matches.length === 1) {
+		return matches[0];
+	}
+
+	return undefined;
 }
 
 function normalizeApplicationOverride(value: ApplicationOverride | unknown): NormalizedApplicationOverride {

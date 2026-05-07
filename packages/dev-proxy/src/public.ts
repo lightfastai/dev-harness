@@ -1,11 +1,15 @@
 export {
 	createVercelMicrofrontendsDevConfig,
+	loadAppRegistry,
 	resolvePortlessApplicationUrl,
+	resolvePortlessAppUrl,
 	resolvePortlessUrl,
 	resolvePortlessMfeRuntime,
 	resolvePortlessMfeUrl,
+	resolveRegistryEntry,
 	resolveRuntimeIdentity,
 	resolveTargetUrl,
+	synthesizeApplicationsFromRegistry,
 } from "./index.js";
 export { relatedProjects, resolveProjectUrl, withProject } from "./projects.js";
 export {
@@ -22,6 +26,9 @@ export {
 } from "./runtime.js";
 
 export type {
+	AppEntry,
+	AppRegistry,
+	AppRegistryEntryConfig,
 	ApplicationOverride,
 	CreateVercelMicrofrontendsDevConfigOptions,
 	CreateVercelMicrofrontendsDevEnvOptions,
