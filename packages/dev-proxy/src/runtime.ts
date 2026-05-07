@@ -12,12 +12,15 @@ import {
 	createVercelMicrofrontendsDevConfig,
 	createVercelMicrofrontendsDevEnv,
 	inferLocalAppNames,
+	loadAppRegistry,
 	loadPortlessMfeConfig,
-	resolveApplicationPortlessName,
+	resolveApplicationDirectories,
 	startPortlessProxy,
 } from "./index.js";
 import type {
+	AppRegistry,
 	Env,
+	MicrofrontendApplicationConfig,
 	MicrofrontendsSourceConfig,
 	VercelMicrofrontendsDevConfigResult,
 } from "./index.js";
@@ -59,7 +62,7 @@ export interface DevProxyDevCommandRuntime extends DevProxyProcessRuntime {
 
 export interface DevProxyAppCommandRuntime extends DevProxyProcessRuntime {
 	configRoot: string;
-	result: VercelMicrofrontendsDevConfigResult;
+	result?: VercelMicrofrontendsDevConfigResult;
 	appName: string;
 	appPort: number;
 }
@@ -80,6 +83,7 @@ export async function startDevProxyTurboCommand({
 	}
 
 	const config = await loadPortlessMfeConfig({ cwd, configPath });
+	const registry = loadAppRegistry(config);
 	const portlessName = name ?? config.portless.name;
 	const { env: portlessEnv } = startPortlessProxy({
 		config: {
@@ -104,49 +108,63 @@ export async function startDevProxyTurboCommand({
 		env: portlessEnv,
 	});
 	const normalizedCommandArgs = disableTurboFrameworkInference(normalizeTurboCommandArgs(commandArgs));
+	const allAppDirs = {
+		...buildAppDirsFromRegistry(registry, config.root),
+		...result.appDirs,
+	};
 	const resolvedLocalApps = inferLocalAppNames({
-		applications: result.sourceConfig.applications,
+		registry,
 		requestedApps: localApps,
 		commandArgs: normalizedCommandArgs,
-		appDirs: result.appDirs,
+		appDirs: allAppDirs,
 		cwd,
 		root: config.root,
 		env: portlessEnv,
 	});
-	const proxyEnv = createVercelMicrofrontendsDevEnv({
-		result,
-		localApps: resolvedLocalApps,
-		env: portlessEnv,
-	});
+	const mfeLocalApps = filterMfeLocalApps(registry, resolvedLocalApps);
+	const hasMfeApps = mfeLocalApps.length > 0;
+	const proxyEnv = hasMfeApps
+		? createVercelMicrofrontendsDevEnv({
+				result,
+				localApps: mfeLocalApps,
+				env: portlessEnv,
+			})
+		: portlessEnv;
 	let proxy: ChildProcess | undefined;
 	let route: ChildProcess | undefined;
-	try {
-		proxy = await startMicrofrontendsProxy({
-			config,
-			result,
-			localApps: resolvedLocalApps,
-			env: proxyEnv,
-			stdio,
-		});
-		route = await spawnWithFallback(
-			buildPortlessRouteCommands({
-				portlessName,
-				appPort: result.localProxyPort,
-			}),
-			{
-				cwd: config.root,
-				env: portlessEnv,
+	if (hasMfeApps) {
+		try {
+			proxy = await startMicrofrontendsProxy({
+				config,
+				result,
+				localApps: mfeLocalApps,
+				env: proxyEnv,
 				stdio,
-			},
+			});
+			route = await spawnWithFallback(
+				buildPortlessRouteCommands({
+					portlessName,
+					appPort: result.localProxyPort,
+				}),
+				{
+					cwd: config.root,
+					env: portlessEnv,
+					stdio,
+				},
+			);
+		} catch (error) {
+			if (proxy && !proxy.killed) {
+				proxy.kill("SIGTERM");
+			}
+			if (route && !route.killed) {
+				route.kill("SIGTERM");
+			}
+			throw error;
+		}
+	} else {
+		console.warn(
+			`[dev-proxy] Skipping @vercel/microfrontends proxy (no MFE apps in --local-app list); https://${portlessName}.${config.portless.tld} will not resolve.`,
 		);
-	} catch (error) {
-		if (proxy && !proxy.killed) {
-			proxy.kill("SIGTERM");
-		}
-		if (route && !route.killed) {
-			route.kill("SIGTERM");
-		}
-		throw error;
 	}
 	const child = spawn(normalizedCommandArgs[0], normalizedCommandArgs.slice(1), {
 		cwd: config.root,
@@ -324,16 +342,12 @@ export async function startDevProxyAppCommand({
 	}
 
 	const config = await loadPortlessMfeConfig({ cwd, configPath });
+	const registry = loadAppRegistry(config);
 	const appEnv = withExistingMicrofrontendsProxyPort(promoteDevProxyAppCommandEnv(env));
-	const result = await createVercelMicrofrontendsDevConfig({
-		cwd: config.root,
-		config,
-		env: appEnv,
-		write: !appEnv.VC_MICROFRONTENDS_CONFIG,
-	});
+	const allAppDirs = buildAppDirsFromRegistry(registry, config.root);
 	const [appName, ...extraApps] = inferLocalAppNames({
-		applications: result.sourceConfig.applications,
-		appDirs: result.appDirs,
+		registry,
+		appDirs: allAppDirs,
 		cwd,
 		root: config.root,
 		env: {},
@@ -342,17 +356,34 @@ export async function startDevProxyAppCommand({
 		throw new Error("Dev proxy app command must be run from exactly one configured app directory.");
 	}
 
-	const appConfig = result.sourceConfig.applications?.[appName] ?? {};
-	const appPort = result.appPorts[appName];
-	if (!appPort) {
-		throw new Error(`Could not resolve local app port for "${appName}".`);
+	const entry = registry.byName[appName];
+	if (!entry) {
+		throw new Error(
+			`Dev proxy app command must be run from a configured app directory; ${appName} is not in apps registry.`,
+		);
 	}
-	const portlessName = resolveApplicationPortlessName(appName, appConfig, config);
-	const runtimeEnv = createVercelMicrofrontendsDevEnv({
-		result,
-		localApps: [appName],
-		env: buildPortlessEnv(config, appEnv),
-	});
+
+	const portlessName = entry.portlessName;
+	const appPort = entry.devPort;
+	let result: VercelMicrofrontendsDevConfigResult | undefined;
+	let runtimeEnv: Env;
+
+	if (entry.mfe) {
+		result = await createVercelMicrofrontendsDevConfig({
+			cwd: config.root,
+			config,
+			env: appEnv,
+			write: !appEnv.VC_MICROFRONTENDS_CONFIG,
+		});
+		runtimeEnv = createVercelMicrofrontendsDevEnv({
+			result,
+			localApps: [appName],
+			env: buildPortlessEnv(config, appEnv),
+		});
+	} else {
+		runtimeEnv = buildPortlessEnv(config, appEnv);
+	}
+
 	const child = await spawnWithFallback(
 		buildPortlessAppCommands({
 			portlessName,
@@ -427,6 +458,26 @@ export function isTurboRunCommand(commandArgs: string[]): boolean {
 		commandArgs[1] === "exec" &&
 		commandArgs[2] === "turbo" &&
 		commandArgs.includes("run");
+}
+
+export function filterMfeLocalApps(
+	registry: AppRegistry,
+	localApps: string[],
+): string[] {
+	return localApps.filter((name) => registry.byName[name]?.mfe === true);
+}
+
+export function buildAppDirsFromRegistry(
+	registry: AppRegistry,
+	root: string,
+): Record<string, string> {
+	const applications = Object.fromEntries(
+		registry.entries.map((entry) => [
+			entry.name,
+			{ packageName: entry.packageName } satisfies MicrofrontendApplicationConfig,
+		]),
+	);
+	return resolveApplicationDirectories({ root, applications });
 }
 
 export function signalExitCode(signal: NodeJS.Signals): number {

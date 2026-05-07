@@ -27,6 +27,8 @@ import {
 import { withPortlessProxy } from "../src/next.js";
 import { relatedProjects, resolveProjectUrl, withProject } from "../src/projects.js";
 import {
+	buildAppDirsFromRegistry,
+	filterMfeLocalApps,
 	prepareDevCommandEnv,
 	promoteDevProxyAppCommandEnv,
 } from "../src/runtime.js";
@@ -1191,6 +1193,113 @@ test("resolveProjectUrl resolves a non-MFE app via registry", () => {
 			env: { NODE_ENV: "production" },
 		}),
 		"https://lightfast-platform.vercel.app",
+	);
+});
+
+test("filterMfeLocalApps keeps only entries with mfe=true", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-proxy-filter-mfe-"));
+	writeJson(path.join(root, "lightfast.dev.json"), {
+		portless: { name: "lightfast", port: 1355, https: false },
+		apps: {
+			"lightfast-app": {
+				packageName: "@lightfast/app",
+				devPort: 4107,
+				mfe: true,
+			},
+			"lightfast-www": {
+				packageName: "@lightfast/www",
+				devPort: 4101,
+				mfe: true,
+			},
+			"lightfast-platform": {
+				packageName: "@lightfast/platform",
+				devPort: 4112,
+				mfe: false,
+			},
+		},
+		microfrontends: { config: "apps/app/microfrontends.json" },
+	});
+
+	const registry = loadAppRegistry(loadPortlessMfeConfigSync({ cwd: root }));
+	assert.deepEqual(
+		filterMfeLocalApps(registry, ["lightfast-app", "lightfast-platform", "lightfast-www"]),
+		["lightfast-app", "lightfast-www"],
+	);
+	assert.deepEqual(filterMfeLocalApps(registry, ["lightfast-platform"]), []);
+	assert.deepEqual(filterMfeLocalApps(registry, []), []);
+});
+
+test("buildAppDirsFromRegistry resolves dirs for both MFE and non-MFE apps", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-proxy-app-dirs-"));
+	fs.writeFileSync(
+		path.join(root, "pnpm-workspace.yaml"),
+		'packages:\n  - "apps/*"\n',
+	);
+	writeJson(path.join(root, "apps/app/package.json"), { name: "@lightfast/app" });
+	writeJson(path.join(root, "apps/platform/package.json"), {
+		name: "@lightfast/platform",
+	});
+	writeJson(path.join(root, "lightfast.dev.json"), {
+		portless: { name: "lightfast", port: 1355, https: false },
+		apps: {
+			"lightfast-app": {
+				packageName: "@lightfast/app",
+				devPort: 4107,
+				mfe: true,
+			},
+			"lightfast-platform": {
+				packageName: "@lightfast/platform",
+				devPort: 4112,
+				mfe: false,
+			},
+		},
+		microfrontends: { config: "apps/app/microfrontends.json" },
+	});
+
+	const registry = loadAppRegistry(loadPortlessMfeConfigSync({ cwd: root }));
+	const appDirs = buildAppDirsFromRegistry(registry, root);
+	assert.equal(appDirs["lightfast-app"], path.join(root, "apps/app"));
+	assert.equal(appDirs["lightfast-platform"], path.join(root, "apps/platform"));
+});
+
+test("inferLocalAppNames resolves a non-MFE app from a cwd inside its package directory", () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "dev-proxy-infer-non-mfe-"));
+	fs.writeFileSync(
+		path.join(root, "pnpm-workspace.yaml"),
+		'packages:\n  - "apps/*"\n',
+	);
+	writeJson(path.join(root, "apps/app/package.json"), { name: "@lightfast/app" });
+	writeJson(path.join(root, "apps/platform/package.json"), {
+		name: "@lightfast/platform",
+	});
+	writeJson(path.join(root, "lightfast.dev.json"), {
+		portless: { name: "lightfast", port: 1355, https: false },
+		apps: {
+			"lightfast-app": {
+				packageName: "@lightfast/app",
+				devPort: 4107,
+				mfe: true,
+			},
+			"lightfast-platform": {
+				packageName: "@lightfast/platform",
+				devPort: 4112,
+				mfe: false,
+			},
+		},
+		microfrontends: { config: "apps/app/microfrontends.json" },
+	});
+
+	const registry = loadAppRegistry(loadPortlessMfeConfigSync({ cwd: root }));
+	const appDirs = buildAppDirsFromRegistry(registry, root);
+	assert.deepEqual(
+		inferLocalAppNames({
+			registry,
+			appDirs,
+			cwd: path.join(root, "apps/platform"),
+			root,
+			env: {},
+		}),
+		["lightfast-platform"],
 	);
 });
 

@@ -13,6 +13,8 @@ export {
 } from "./index.js";
 export { relatedProjects, resolveProjectUrl, withProject } from "./projects.js";
 export {
+	buildAppDirsFromRegistry,
+	filterMfeLocalApps,
 	formatDevProxyRuntimeSummary,
 	isTurboRunCommand,
 	normalizeTurboCommandArgs,
