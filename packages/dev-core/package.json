@@ -1,6 +1,6 @@
 {
   "name": "@lightfastai/dev-core",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Core local development primitives for Lightfast worktrees.",
   "license": "MIT",
   "author": "Lightfast <hello@lightfast.ai>",
