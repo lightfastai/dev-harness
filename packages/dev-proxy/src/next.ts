@@ -6,9 +6,7 @@ export interface NextConfigWithPortlessProxy {
 	experimental?: {
 		serverActions?: {
 			allowedOrigins?: string[];
-			[key: string]: unknown;
 		};
-		[key: string]: unknown;
 	};
 }
 
