@@ -17,6 +17,7 @@
   "ignore": [
     "@example/app",
     "@example/www",
+    "@example/platform",
     "@example/desktop",
     "@example/db-app",
     "@example/vendor-db",

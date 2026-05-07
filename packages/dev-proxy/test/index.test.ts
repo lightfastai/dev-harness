@@ -33,6 +33,7 @@ import {
 	promoteDevProxyAppCommandEnv,
 } from "../src/runtime.js";
 import type {
+	MicrofrontendApplicationConfig,
 	MicrofrontendsSourceConfig,
 	VercelMicrofrontendsDevConfigResult,
 } from "../src/index.js";
@@ -1300,6 +1301,88 @@ test("inferLocalAppNames resolves a non-MFE app from a cwd inside its package di
 			env: {},
 		}),
 		["lightfast-platform"],
+	);
+});
+
+test("synthesizeApplicationsFromRegistry merges routing arrays from microfrontends.json", () => {
+	const root = createLightfastFixtureWorkspace();
+	writeJson(path.join(root, "apps/app/microfrontends.json"), {
+		applications: {
+			"lightfast-app": {},
+			"lightfast-www": {
+				routing: [
+					{ group: "marketing", paths: ["/", "/docs", "/docs/:path*"] },
+				],
+			},
+		},
+	});
+
+	const registry = loadAppRegistry(loadPortlessMfeConfigSync({ cwd: root }));
+	const applications = synthesizeApplicationsFromRegistry(registry);
+
+	assert.deepEqual(Object.keys(applications).sort(), [
+		"lightfast-app",
+		"lightfast-www",
+	]);
+	assert.equal(applications["lightfast-app"].packageName, "@lightfast/app");
+	assert.equal(applications["lightfast-app"].development?.fallback, "lightfast-app.vercel.app");
+	assert.equal("routing" in applications["lightfast-app"], false);
+
+	const www = applications["lightfast-www"] as MicrofrontendApplicationConfig & {
+		routing?: Array<{ group?: string; paths: string[] }>;
+	};
+	assert.equal(www.packageName, "@lightfast/www");
+	assert.equal(www.development?.fallback, "lightfast-www.vercel.app");
+	assert.equal(Array.isArray(www.routing), true);
+	assert.equal(www.routing?.[0].group, "marketing");
+	assert.deepEqual(www.routing?.[0].paths, ["/", "/docs", "/docs/:path*"]);
+});
+
+test("synthesizeApplicationsFromRegistry matches the lightfast-shaped microfrontends.json applications snapshot", () => {
+	const root = createLightfastFixtureWorkspace();
+	writeJson(path.join(root, "apps/app/microfrontends.json"), {
+		applications: {
+			"lightfast-app": {},
+			"lightfast-www": {
+				routing: [
+					{ paths: ["/", "/docs", "/docs/:path*"] },
+				],
+			},
+		},
+	});
+
+	const registry = loadAppRegistry(loadPortlessMfeConfigSync({ cwd: root }));
+	assert.deepEqual(synthesizeApplicationsFromRegistry(registry), {
+		"lightfast-app": {
+			packageName: "@lightfast/app",
+			development: { fallback: "lightfast-app.vercel.app" },
+		},
+		"lightfast-www": {
+			packageName: "@lightfast/www",
+			development: { fallback: "lightfast-www.vercel.app" },
+			routing: [{ paths: ["/", "/docs", "/docs/:path*"] }],
+		},
+	});
+});
+
+test("config schema retains apps requirement and rejects unknown root properties", () => {
+	const schemaPath = require.resolve("@lightfastai/dev-proxy/schema/config.schema.json");
+	const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
+	assert.equal(schema.additionalProperties, false);
+	assert.deepEqual(schema.required, ["apps"]);
+	assert.deepEqual(schema.properties.apps.required, undefined);
+	assert.equal(schema.properties.apps.minProperties, 1);
+	assert.deepEqual(
+		schema.properties.apps.additionalProperties.required,
+		["packageName", "devPort", "mfe"],
+	);
+	assert.equal(
+		schema.properties.apps.additionalProperties.additionalProperties,
+		false,
+	);
+	assert.deepEqual(
+		Object.keys(schema.properties.apps.additionalProperties.properties).sort(),
+		["devPort", "fallback", "mfe", "packageName", "portlessName"],
 	);
 });
 
