@@ -133,7 +133,7 @@ because its desktop probe has no `setAsDefaultProtocolClient`, `open-url`,
 
 ### B3. Fixed Local Stack Ports
 
-**Status:** open
+**Status:** partially resolved (2026-05-07)
 
 The stack currently assumes fixed local ports such as:
 
@@ -192,6 +192,12 @@ one worktree. Concurrent launchers can overwrite the same file and the same
 - Linked worktrees get deterministic non-conflicting ports.
 - `development.local` values are validated against actual running app ports.
 - Platform has the same generated instance metadata as the MFE apps.
+
+Per-app `next dev` ports are now host-keyed (see plan
+`2026-05-07-dev-proxy-host-keyed-ports.md`). Two worktrees can run `pnpm dev`
+concurrently without TCP collisions. The MFE proxy's `localProxyPort` is also
+host-keyed. Remaining B3 work: desktop renderer port (`5173`), Inngest dev
+server port, and any other shared global resources documented in B6.
 
 ### B4. Desktop API Origin Is Static Unless Manually Overridden
 
