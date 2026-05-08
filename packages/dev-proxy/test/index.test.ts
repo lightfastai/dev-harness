@@ -15,8 +15,11 @@ import {
 	loadAppRegistry,
 	loadPortlessMfeConfig,
 	loadPortlessMfeConfigSync,
+	resolveAppPort,
+	resolveBaseHost,
 	resolvePortlessAppUrl,
 	resolvePortlessApplicationUrl,
+	resolvePortlessHost,
 	resolvePortlessMfeRuntime,
 	resolvePortlessUrl,
 	resolveRuntimeIdentity,
@@ -174,14 +177,13 @@ test("withPortlessProxy adds config-derived local origins to Next config", () =>
 			tld: "localhost",
 		},
 		apps: {
-			app: { packageName: "app", devPort: 4001, fallback: "app.localhost", mfe: true },
+			app: { packageName: "app", fallback: "app.localhost", mfe: true },
 			platform: {
 				packageName: "@repo/platform",
-				devPort: 4002,
 				fallback: "platform.localhost",
 				mfe: true,
 			},
-			www: { packageName: "www", devPort: 4003, fallback: "www.localhost", mfe: true },
+			www: { packageName: "www", fallback: "www.localhost", mfe: true },
 		},
 		microfrontends: {
 			config: "apps/app/microfrontends.json",
@@ -288,14 +290,13 @@ test("withPortlessProxy populates serverActions allowedOrigins when serverAction
 			tld: "localhost",
 		},
 		apps: {
-			app: { packageName: "app", devPort: 4001, fallback: "app.localhost", mfe: true },
+			app: { packageName: "app", fallback: "app.localhost", mfe: true },
 			platform: {
 				packageName: "@repo/platform",
-				devPort: 4002,
 				fallback: "platform.localhost",
 				mfe: true,
 			},
-			www: { packageName: "www", devPort: 4003, fallback: "www.localhost", mfe: true },
+			www: { packageName: "www", fallback: "www.localhost", mfe: true },
 		},
 		microfrontends: {
 			config: "apps/app/microfrontends.json",
@@ -328,14 +329,13 @@ test("withPortlessProxy serverActions includePort:both populates port-suffixed o
 			tld: "localhost",
 		},
 		apps: {
-			app: { packageName: "app", devPort: 4001, fallback: "app.localhost", mfe: true },
+			app: { packageName: "app", fallback: "app.localhost", mfe: true },
 			platform: {
 				packageName: "@repo/platform",
-				devPort: 4002,
 				fallback: "platform.localhost",
 				mfe: true,
 			},
-			www: { packageName: "www", devPort: 4003, fallback: "www.localhost", mfe: true },
+			www: { packageName: "www", fallback: "www.localhost", mfe: true },
 		},
 		microfrontends: {
 			config: "apps/app/microfrontends.json",
@@ -365,14 +365,13 @@ test("withPortlessProxy leaves experimental untouched when serverActions is omit
 			tld: "localhost",
 		},
 		apps: {
-			app: { packageName: "app", devPort: 4001, fallback: "app.localhost", mfe: true },
+			app: { packageName: "app", fallback: "app.localhost", mfe: true },
 			platform: {
 				packageName: "@repo/platform",
-				devPort: 4002,
 				fallback: "platform.localhost",
 				mfe: true,
 			},
-			www: { packageName: "www", devPort: 4003, fallback: "www.localhost", mfe: true },
+			www: { packageName: "www", fallback: "www.localhost", mfe: true },
 		},
 		microfrontends: {
 			config: "apps/app/microfrontends.json",
@@ -468,16 +467,16 @@ test("createVercelMicrofrontendsDevConfig synthesizes applications from registry
 				name: "mfe",
 				port: 1355,
 				https: false,
+				tld: "localhost",
 			},
 			apps: {
-				app: { packageName: "app", devPort: 4001, fallback: "app.localhost", mfe: true },
+				app: { packageName: "app", fallback: "app.localhost", mfe: true },
 				platform: {
 					packageName: "@repo/platform",
-					devPort: 4002,
 					fallback: "platform.localhost",
 					mfe: true,
 				},
-				www: { packageName: "www", devPort: 4003, fallback: "www.localhost", mfe: true },
+				www: { packageName: "www", fallback: "www.localhost", mfe: true },
 			},
 			microfrontends: {
 				config: "apps/app/microfrontends.json",
@@ -509,7 +508,12 @@ test("createVercelMicrofrontendsDevConfig synthesizes applications from registry
 		platform: "http://feature.platform.mfe.localhost:1355/",
 		www: "http://feature.www.mfe.localhost:1355/",
 	});
-	assert.deepEqual(result.appPorts, { app: 4001, platform: 4002, www: 4003 });
+	assert.equal(typeof result.appPorts.app, "number");
+	assert.equal(typeof result.appPorts.platform, "number");
+	assert.equal(typeof result.appPorts.www, "number");
+	assert.notEqual(result.appPorts.app, result.appPorts.platform);
+	assert.notEqual(result.appPorts.app, result.appPorts.www);
+	assert.notEqual(result.appPorts.platform, result.appPorts.www);
 	assert.equal("appBridgePorts" in result, false);
 	const generatedConfig = result.generatedConfig as MicrofrontendsSourceConfig & {
 		applications: {
@@ -604,7 +608,7 @@ test("resolvePortlessApplicationUrl supports Lightfast-style package names and o
 	);
 });
 
-test("createVercelMicrofrontendsDevConfig uses explicit registry devPorts across worktrees", async () => {
+test("createVercelMicrofrontendsDevConfig produces host-keyed appPorts that diverge across worktrees", async () => {
 	const root = createLightfastFixtureWorkspace();
 	const baseConfig = {
 		root,
@@ -616,13 +620,11 @@ test("createVercelMicrofrontendsDevConfig uses explicit registry devPorts across
 		apps: {
 			"lightfast-app": {
 				packageName: "@lightfast/app",
-				devPort: 4107,
 				fallback: "lightfast-app.vercel.app",
 				mfe: true,
 			},
 			"lightfast-www": {
 				packageName: "@lightfast/www",
-				devPort: 4101,
 				portlessName: "docs.lightfast",
 				fallback: "lightfast-www.vercel.app",
 				mfe: true,
@@ -654,9 +656,10 @@ test("createVercelMicrofrontendsDevConfig uses explicit registry devPorts across
 
 	assert.equal(main.host, "lightfast.localhost");
 	assert.equal(main.appUrls["lightfast-app"], "https://app.lightfast.localhost/");
-	assert.equal(main.appPorts["lightfast-app"], 4107);
-	assert.equal(main.appPorts["lightfast-www"], 4101);
-	assert.equal(getGeneratedLocal(main, "lightfast-app"), 4107);
+	assert.equal(typeof main.appPorts["lightfast-app"], "number");
+	assert.equal(typeof main.appPorts["lightfast-www"], "number");
+	assert.notEqual(main.appPorts["lightfast-app"], main.appPorts["lightfast-www"]);
+	assert.equal(main.appPorts["lightfast-app"], getGeneratedLocal(main, "lightfast-app"));
 	assert.equal("appBridgePorts" in main, false);
 	assertValidMicrofrontendsDevConfig(main.generatedConfig);
 
@@ -665,8 +668,20 @@ test("createVercelMicrofrontendsDevConfig uses explicit registry devPorts across
 		worktree.appUrls["lightfast-app"],
 		"https://fix-ui.app.lightfast.localhost/",
 	);
-	assert.equal(worktree.appPorts["lightfast-app"], 4107);
-	assert.equal(getGeneratedLocal(worktree, "lightfast-app"), 4107);
+	assert.notEqual(
+		worktree.appPorts["lightfast-app"],
+		main.appPorts["lightfast-app"],
+		"app port must differ between primary worktree and prefixed worktree",
+	);
+	assert.notEqual(
+		worktree.appPorts["lightfast-www"],
+		main.appPorts["lightfast-www"],
+		"www port must differ between primary worktree and prefixed worktree",
+	);
+	assert.equal(
+		worktree.appPorts["lightfast-app"],
+		getGeneratedLocal(worktree, "lightfast-app"),
+	);
 	assert.equal("appBridgePorts" in worktree, false);
 	assertValidMicrofrontendsDevConfig(worktree.generatedConfig);
 });
@@ -883,7 +898,7 @@ test("resolveProjectUrl falls back to default URL when registry entry has no fal
 	writeJson(path.join(root, "lightfast.dev.json"), {
 		portless: { name: "mfe", port: 1355 },
 		apps: {
-			app: { packageName: "app", devPort: 4001, mfe: true },
+			app: { packageName: "app", mfe: true },
 		},
 		microfrontends: { config: "apps/app/microfrontends.json" },
 	});
@@ -961,17 +976,14 @@ test("loadAppRegistry returns entries with computed portless names and defaults"
 		apps: {
 			"lightfast-app": {
 				packageName: "@lightfast/app",
-				devPort: 4107,
 				mfe: true,
 			},
 			"lightfast-platform": {
 				packageName: "@lightfast/platform",
-				devPort: 4112,
 				mfe: false,
 			},
 			"lightfast-www": {
 				packageName: "@lightfast/www",
-				devPort: 4101,
 				portlessName: "docs.lightfast",
 				fallback: "https://lightfast-www.vercel.app",
 				mfe: true,
@@ -986,7 +998,6 @@ test("loadAppRegistry returns entries with computed portless names and defaults"
 	assert.equal(registry.entries.length, 3);
 	const app = registry.byName["lightfast-app"];
 	assert.equal(app.packageName, "@lightfast/app");
-	assert.equal(app.devPort, 4107);
 	assert.equal(app.portlessName, "app.lightfast");
 	assert.equal(app.fallback, "https://lightfast.ai");
 	assert.equal(app.mfe, true);
@@ -1028,7 +1039,6 @@ test("loadAppRegistry throws when an entry is missing the mfe flag", () => {
 				apps: {
 					"lightfast-app": {
 						packageName: "@lightfast/app",
-						devPort: 4107,
 					},
 				},
 			} as never),
@@ -1036,19 +1046,19 @@ test("loadAppRegistry throws when an entry is missing the mfe flag", () => {
 	);
 });
 
-test("loadAppRegistry throws when devPort is out of range", () => {
+test("loadAppRegistry rejects unknown devPort field with a path-pointing error", () => {
 	assert.throws(
 		() =>
 			loadAppRegistry({
 				apps: {
 					app: {
 						packageName: "app",
-						devPort: 0,
+						devPort: 4107,
 						mfe: true,
 					},
 				},
 			} as never),
-		/apps\.app\.devPort must be an integer between 1 and 65535\./,
+		/apps\.app\.devPort is no longer supported in dev-proxy@0\.4\.0\+/,
 	);
 });
 
@@ -1076,13 +1086,11 @@ test("synthesizeApplicationsFromRegistry includes only mfe entries with packageN
 		apps: {
 			"lightfast-app": {
 				packageName: "@lightfast/app",
-				devPort: 4107,
 				fallback: "https://app.example.com",
 				mfe: true,
 			},
 			"lightfast-platform": {
 				packageName: "@lightfast/platform",
-				devPort: 4112,
 				mfe: false,
 			},
 		},
@@ -1111,12 +1119,10 @@ test("getPortlessProxyOrigins includes non-MFE app subdomains from registry", ()
 		apps: {
 			"lightfast-app": {
 				packageName: "@lightfast/app",
-				devPort: 4107,
 				mfe: true,
 			},
 			"lightfast-platform": {
 				packageName: "@lightfast/platform",
-				devPort: 4112,
 				mfe: false,
 			},
 		},
@@ -1140,7 +1146,6 @@ test("resolvePortlessAppUrl resolves non-MFE app subdomains", () => {
 		apps: {
 			"lightfast-platform": {
 				packageName: "@lightfast/platform",
-				devPort: 4112,
 				mfe: false,
 			},
 		},
@@ -1167,7 +1172,6 @@ test("resolveProjectUrl resolves a non-MFE app via registry", () => {
 		apps: {
 			"lightfast-platform": {
 				packageName: "@lightfast/platform",
-				devPort: 4112,
 				fallback: "https://lightfast-platform.vercel.app",
 				mfe: false,
 			},
@@ -1204,17 +1208,14 @@ test("filterMfeLocalApps keeps only entries with mfe=true", () => {
 		apps: {
 			"lightfast-app": {
 				packageName: "@lightfast/app",
-				devPort: 4107,
 				mfe: true,
 			},
 			"lightfast-www": {
 				packageName: "@lightfast/www",
-				devPort: 4101,
 				mfe: true,
 			},
 			"lightfast-platform": {
 				packageName: "@lightfast/platform",
-				devPort: 4112,
 				mfe: false,
 			},
 		},
@@ -1245,12 +1246,10 @@ test("buildAppDirsFromRegistry resolves dirs for both MFE and non-MFE apps", () 
 		apps: {
 			"lightfast-app": {
 				packageName: "@lightfast/app",
-				devPort: 4107,
 				mfe: true,
 			},
 			"lightfast-platform": {
 				packageName: "@lightfast/platform",
-				devPort: 4112,
 				mfe: false,
 			},
 		},
@@ -1278,12 +1277,10 @@ test("inferLocalAppNames resolves a non-MFE app from a cwd inside its package di
 		apps: {
 			"lightfast-app": {
 				packageName: "@lightfast/app",
-				devPort: 4107,
 				mfe: true,
 			},
 			"lightfast-platform": {
 				packageName: "@lightfast/platform",
-				devPort: 4112,
 				mfe: false,
 			},
 		},
@@ -1365,7 +1362,7 @@ test("synthesizeApplicationsFromRegistry matches the lightfast-shaped microfront
 	});
 });
 
-test("config schema retains apps requirement and rejects unknown root properties", () => {
+test("config schema retains apps requirement and rejects devPort via additionalProperties: false", () => {
 	const schemaPath = require.resolve("@lightfastai/dev-proxy/schema/config.schema.json");
 	const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
 	assert.equal(schema.additionalProperties, false);
@@ -1374,7 +1371,7 @@ test("config schema retains apps requirement and rejects unknown root properties
 	assert.equal(schema.properties.apps.minProperties, 1);
 	assert.deepEqual(
 		schema.properties.apps.additionalProperties.required,
-		["packageName", "devPort", "mfe"],
+		["packageName", "mfe"],
 	);
 	assert.equal(
 		schema.properties.apps.additionalProperties.additionalProperties,
@@ -1382,8 +1379,238 @@ test("config schema retains apps requirement and rejects unknown root properties
 	);
 	assert.deepEqual(
 		Object.keys(schema.properties.apps.additionalProperties.properties).sort(),
-		["devPort", "fallback", "mfe", "packageName", "portlessName"],
+		["fallback", "mfe", "packageName", "portlessName"],
 	);
+});
+
+test("resolveBaseHost returns ${name}.${tld} and honors PORTLESS_TLD env override", () => {
+	const config = {
+		root: "/tmp/x",
+		portless: { name: "lightfast", port: 443, https: true, tld: "localhost" },
+		apps: {},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+			proxyPortRange: { min: 9000, max: 9999 },
+		},
+	};
+
+	assert.equal(resolveBaseHost(config as never, {}), "lightfast.localhost");
+	assert.equal(
+		resolveBaseHost(config as never, { PORTLESS_TLD: "test" }),
+		"lightfast.test",
+	);
+});
+
+test("resolveAppPort is deterministic for the same (host, appName)", async () => {
+	const portAvailable = async () => true;
+	const a = await resolveAppPort({
+		appName: "lightfast-app",
+		host: "lightfast.localhost",
+		baseHost: "lightfast.localhost",
+		portAvailable,
+	});
+	const b = await resolveAppPort({
+		appName: "lightfast-app",
+		host: "lightfast.localhost",
+		baseHost: "lightfast.localhost",
+		portAvailable,
+	});
+	assert.equal(a, b);
+});
+
+test("resolveAppPort uses different seeds for primary vs prefixed worktree hosts", async () => {
+	const portAvailable = async () => true;
+	const expectedPrimary = await choosePort("lightfast-app", {
+		min: 3000,
+		max: 8000,
+		portAvailable,
+	});
+	const expectedWorktree = await choosePort(
+		"fix-ui.lightfast.localhost:lightfast-app",
+		{ min: 3000, max: 8000, portAvailable },
+	);
+	const primary = await resolveAppPort({
+		appName: "lightfast-app",
+		host: "lightfast.localhost",
+		baseHost: "lightfast.localhost",
+		portAvailable,
+	});
+	const worktree = await resolveAppPort({
+		appName: "lightfast-app",
+		host: "fix-ui.lightfast.localhost",
+		baseHost: "lightfast.localhost",
+		portAvailable,
+	});
+	assert.equal(primary, expectedPrimary);
+	assert.equal(worktree, expectedWorktree);
+	assert.notEqual(primary, worktree);
+});
+
+test("resolveAppPort yields distinct ports across realistic worktree-prefixed hosts", async () => {
+	const portAvailable = async () => true;
+	const baseHost = "lightfast.localhost";
+	const hosts = [
+		baseHost,
+		"fix-ui.lightfast.localhost",
+		"feature-x.lightfast.localhost",
+		"chore-ports.lightfast.localhost",
+		"experiment-foo.lightfast.localhost",
+		"test-multiwt-foo.lightfast.localhost",
+	];
+	const ports = await Promise.all(
+		hosts.map((host) =>
+			resolveAppPort({
+				appName: "lightfast-app",
+				host,
+				baseHost,
+				portAvailable,
+			}),
+		),
+	);
+	const unique = new Set(ports);
+	// Allow at most one collision in the sample to stay robust against pathological hashes;
+	// the linear-probe in choosePort recovers in practice.
+	assert.ok(
+		unique.size >= hosts.length - 1,
+		`Expected ~${hosts.length} distinct ports, got ${unique.size}: ${ports.join(", ")}`,
+	);
+});
+
+test("resolveAppPort linear-probes past usedPorts", async () => {
+	const portAvailable = async () => true;
+	const initial = await resolveAppPort({
+		appName: "lightfast-app",
+		host: "lightfast.localhost",
+		baseHost: "lightfast.localhost",
+		portAvailable,
+	});
+	const probed = await resolveAppPort({
+		appName: "lightfast-app",
+		host: "lightfast.localhost",
+		baseHost: "lightfast.localhost",
+		usedPorts: new Set([initial]),
+		portAvailable,
+	});
+	assert.notEqual(probed, initial);
+});
+
+test("resolveAppPort linear-probes past unavailable TCP ports (EADDRINUSE recovery)", async () => {
+	const checked: number[] = [];
+	const port = await resolveAppPort({
+		appName: "lightfast-app",
+		host: "lightfast.localhost",
+		baseHost: "lightfast.localhost",
+		portAvailable: async (candidate) => {
+			checked.push(candidate);
+			return checked.length > 1;
+		},
+	});
+	assert.equal(checked.length, 2);
+	assert.equal(port, checked[1]);
+});
+
+test("createVercelMicrofrontendsDevConfig and per-app paths agree on appPort for (host, appName)", async () => {
+	const root = createLightfastFixtureWorkspace();
+	const baseConfig = {
+		root,
+		portless: {
+			name: "lightfast",
+			port: 443,
+			https: true,
+		},
+		apps: {
+			"lightfast-app": {
+				packageName: "@lightfast/app",
+				fallback: "lightfast-app.vercel.app",
+				mfe: true,
+			},
+			"lightfast-www": {
+				packageName: "@lightfast/www",
+				portlessName: "docs.lightfast",
+				fallback: "lightfast-www.vercel.app",
+				mfe: true,
+			},
+		},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+		},
+	};
+
+	const supervisor = await createVercelMicrofrontendsDevConfig({
+		cwd: root,
+		config: baseConfig,
+		env: {},
+		write: false,
+		portAvailable: async () => true,
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => "fix-ui",
+	});
+
+	// The per-app command resolves the same (host, appName) → resolveAppPort directly
+	// would produce the same value as the supervisor's loop because choosePort is
+	// deterministic and observes the same TCP state.
+	const baseHost = "lightfast.localhost";
+	const host = "fix-ui.lightfast.localhost";
+	const perAppPort = await resolveAppPort({
+		appName: "lightfast-app",
+		host,
+		baseHost,
+		portAvailable: async () => true,
+	});
+
+	assert.equal(supervisor.host, host);
+	assert.equal(supervisor.appPorts["lightfast-app"], perAppPort);
+});
+
+test("resolveAppPort + resolvePortlessHost compute distinct ports for non-MFE apps across worktrees", async () => {
+	// Models the per-app command path for a non-MFE entry: host is the per-app
+	// portless host (`<wt>.platform.lightfast.localhost` on a worktree, plain
+	// `platform.lightfast.localhost` on primary). Different host → different seed
+	// → different port, which is what unblocks two worktrees from booting platform
+	// concurrently.
+	const config = {
+		root: "/tmp/test",
+		portless: { name: "lightfast", port: 443, https: true, tld: "localhost" },
+		apps: {},
+		microfrontends: {
+			config: "apps/app/microfrontends.json",
+			proxyPortRange: { min: 9000, max: 9999 },
+		},
+	};
+
+	const baseHost = resolveBaseHost(config as never);
+	const primaryHost = resolvePortlessHost({
+		name: "platform.lightfast",
+		cwd: "/tmp/test",
+		env: {},
+		config: config as never,
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => undefined,
+	});
+	const worktreeHost = resolvePortlessHost({
+		name: "platform.lightfast",
+		cwd: "/tmp/test",
+		env: {},
+		config: config as never,
+		getPortlessUrl: () => undefined,
+		detectWorktreePrefix: () => "fix-ui",
+	});
+
+	const primaryPort = await resolveAppPort({
+		appName: "lightfast-platform",
+		host: primaryHost,
+		baseHost,
+		portAvailable: async () => true,
+	});
+	const worktreePort = await resolveAppPort({
+		appName: "lightfast-platform",
+		host: worktreeHost,
+		baseHost,
+		portAvailable: async () => true,
+	});
+
+	assert.notEqual(primaryHost, worktreeHost);
+	assert.notEqual(primaryPort, worktreePort);
 });
 
 function createFixtureWorkspace() {
@@ -1403,14 +1630,13 @@ function createFixtureWorkspace() {
 			https: false,
 		},
 		apps: {
-			app: { packageName: "app", devPort: 4001, fallback: "app.localhost", mfe: true },
+			app: { packageName: "app", fallback: "app.localhost", mfe: true },
 			platform: {
 				packageName: "@repo/platform",
-				devPort: 4002,
 				fallback: "platform.localhost",
 				mfe: true,
 			},
-			www: { packageName: "www", devPort: 4003, fallback: "www.localhost", mfe: true },
+			www: { packageName: "www", fallback: "www.localhost", mfe: true },
 		},
 		microfrontends: {
 			config: "apps/app/microfrontends.json",
@@ -1454,13 +1680,11 @@ function createLightfastFixtureWorkspace() {
 		apps: {
 			"lightfast-app": {
 				packageName: "@lightfast/app",
-				devPort: 4107,
 				fallback: "lightfast-app.vercel.app",
 				mfe: true,
 			},
 			"lightfast-www": {
 				packageName: "@lightfast/www",
-				devPort: 4101,
 				portlessName: "docs.lightfast",
 				fallback: "lightfast-www.vercel.app",
 				mfe: true,

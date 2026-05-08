@@ -8,19 +8,16 @@
   "apps": {
     "app": {
       "packageName": "@example/app",
-      "devPort": 4101,
       "fallback": "https://app.example.com",
       "mfe": true
     },
     "www": {
       "packageName": "@example/www",
-      "devPort": 4102,
       "fallback": "https://www.example.com",
       "mfe": true
     },
     "platform": {
       "packageName": "@example/platform",
-      "devPort": 4103,
       "fallback": "https://platform.example.com",
       "mfe": false
     }

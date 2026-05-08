@@ -30,7 +30,6 @@ export type ApplicationOverride =
 
 export interface AppRegistryEntryConfig {
 	packageName: string;
-	devPort: number;
 	portlessName?: string;
 	fallback?: string;
 	mfe: boolean;
@@ -39,7 +38,6 @@ export interface AppRegistryEntryConfig {
 export interface AppEntry {
 	name: string;
 	packageName: string;
-	devPort: number;
 	portlessName: string;
 	fallback: string;
 	mfe: boolean;
@@ -383,7 +381,6 @@ export function loadAppRegistry(
 		const entry: AppEntry = {
 			name,
 			packageName: raw.packageName,
-			devPort: raw.devPort,
 			portlessName,
 			fallback,
 			mfe: raw.mfe,
@@ -422,13 +419,10 @@ function validateAppRegistryEntry(name: string, raw: AppRegistryEntryConfig): vo
 	if (typeof raw.packageName !== "string" || !raw.packageName.trim()) {
 		throw new Error(`apps.${name}.packageName must be a non-empty string.`);
 	}
-	if (
-		typeof raw.devPort !== "number" ||
-		!Number.isInteger(raw.devPort) ||
-		raw.devPort < 1 ||
-		raw.devPort > 65535
-	) {
-		throw new Error(`apps.${name}.devPort must be an integer between 1 and 65535.`);
+	if ("devPort" in raw) {
+		throw new Error(
+			`apps.${name}.devPort is no longer supported in dev-proxy@0.4.0+. Remove this field; ports are now derived from (host, appName).`,
+		);
 	}
 	if (typeof raw.mfe !== "boolean") {
 		throw new Error(`apps.${name}.mfe must be a boolean.`);
@@ -730,6 +724,7 @@ export async function createVercelMicrofrontendsDevConfig({
 		getPortlessUrl,
 		detectWorktreePrefix,
 	});
+	const baseHost = resolveBaseHost(normalized, env);
 	const localProxyPort = await resolveLocalProxyPort(host, {
 		env,
 		range: mfeConfigOptions.proxyPortRange,
@@ -755,7 +750,19 @@ export async function createVercelMicrofrontendsDevConfig({
 			}),
 		]),
 	);
-	const appPorts = Object.fromEntries(mfeEntries.map((entry) => [entry.name, entry.devPort]));
+	const usedPorts = new Set<number>([localProxyPort]);
+	const appPorts: Record<string, number> = {};
+	for (const entry of mfeEntries) {
+		const port = await resolveAppPort({
+			appName: entry.name,
+			host,
+			baseHost,
+			usedPorts,
+			portAvailable,
+		});
+		appPorts[entry.name] = port;
+		usedPorts.add(port);
+	}
 	const appLocalUrls = Object.fromEntries(
 		Object.entries(appUrls).map(([appName, appUrl]) => [
 			appName,
@@ -1076,6 +1083,14 @@ export function extractCommandFilters(commandArgs: string[] = []): string[] {
 	return filters;
 }
 
+export function resolveBaseHost(
+	config: NormalizedPortlessMfeConfig,
+	env: Env = process.env,
+): string {
+	const tld = env.PORTLESS_TLD || config.portless.tld;
+	return `${config.portless.name}.${tld}`;
+}
+
 export function resolvePortlessHost({
 	name,
 	cwd = process.cwd(),
@@ -1180,6 +1195,32 @@ export async function resolveLocalProxyPort(
 		min: proxyRange.min,
 		max: proxyRange.max,
 		usedPorts: new Set(),
+		portAvailable,
+	});
+}
+
+export interface ResolveAppPortOptions {
+	appName: string;
+	host: string;
+	baseHost: string;
+	range?: NormalizedPortRange;
+	usedPorts?: Set<number>;
+	portAvailable?: PortAvailable;
+}
+
+export async function resolveAppPort({
+	appName,
+	host,
+	baseHost,
+	range = DEFAULT_MFE_APP_PORT_RANGE,
+	usedPorts = new Set<number>(),
+	portAvailable = isPortAvailable,
+}: ResolveAppPortOptions): Promise<number> {
+	const seed = host === baseHost ? appName : `${host}:${appName}`;
+	return choosePort(seed, {
+		min: range.min,
+		max: range.max,
+		usedPorts,
 		portAvailable,
 	});
 }

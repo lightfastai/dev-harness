@@ -15,6 +15,9 @@ import {
 	loadAppRegistry,
 	loadPortlessMfeConfig,
 	resolveApplicationDirectories,
+	resolveAppPort,
+	resolveBaseHost,
+	resolvePortlessHost,
 	startPortlessProxy,
 } from "./index.js";
 import type {
@@ -364,7 +367,14 @@ export async function startDevProxyAppCommand({
 	}
 
 	const portlessName = entry.portlessName;
-	const appPort = entry.devPort;
+	const baseHost = resolveBaseHost(config, appEnv);
+	const host = resolvePortlessHost({
+		name: config.portless.name,
+		cwd: config.root,
+		env: appEnv,
+		config,
+	});
+	const appPort = await resolveAppPort({ appName, host, baseHost });
 	let result: VercelMicrofrontendsDevConfigResult | undefined;
 	let runtimeEnv: Env;
 

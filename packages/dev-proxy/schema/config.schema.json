@@ -37,16 +37,11 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["packageName", "devPort", "mfe"],
+        "required": ["packageName", "mfe"],
         "properties": {
           "packageName": {
             "type": "string",
             "minLength": 1
-          },
-          "devPort": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535
           },
           "portlessName": {
             "type": "string",
