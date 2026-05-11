@@ -1,5 +1,14 @@
 # @lightfastai/dev-cli
 
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies [5bc37db]
+  - @lightfastai/dev-proxy@0.4.2
+  - @lightfastai/dev-core@0.4.2
+  - @lightfastai/dev-services@0.4.2
+
 ## 0.4.1
 
 ### Patch Changes
