@@ -1,6 +1,6 @@
 {
   "name": "@lightfastai/dev-services",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Local development service helpers for Lightfast worktrees.",
   "license": "MIT",
   "author": "Lightfast <hello@lightfast.ai>",
