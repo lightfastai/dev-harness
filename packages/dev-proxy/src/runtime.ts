@@ -425,6 +425,7 @@ export async function startDevProxyAppCommand({
 			cwd,
 			env: runtimeEnv,
 			stdio,
+			detached: false,
 		},
 	);
 
@@ -456,7 +457,7 @@ export function startDevProxyAppRuntimeCommand({
 		cwd,
 		env: childEnv,
 		stdio,
-		detached: process.platform !== "win32",
+		detached: false,
 	});
 
 	return createSingleChildRuntime(child);
