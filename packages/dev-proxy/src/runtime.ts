@@ -6,6 +6,24 @@ import type {
 	SpawnOptions,
 	StdioOptions,
 } from "node:child_process";
+
+const SHUTDOWN_GRACE_MS = 3000;
+
+export function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+	if (!child.pid || child.killed) return;
+	if (process.platform === "win32") {
+		child.kill(signal);
+		return;
+	}
+	try {
+		process.kill(-child.pid, signal);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "ESRCH") {
+			child.kill(signal);
+		}
+	}
+}
 import {
 	addTurboDevEnvMode,
 	buildPortlessEnv,
@@ -156,11 +174,11 @@ export async function startDevProxyTurboCommand({
 				},
 			);
 		} catch (error) {
-			if (proxy && !proxy.killed) {
-				proxy.kill("SIGTERM");
+			if (proxy) {
+				killProcessGroup(proxy, "SIGTERM");
 			}
-			if (route && !route.killed) {
-				route.kill("SIGTERM");
+			if (route) {
+				killProcessGroup(route, "SIGTERM");
 			}
 			throw error;
 		}
@@ -173,6 +191,7 @@ export async function startDevProxyTurboCommand({
 		cwd: config.root,
 		env: prepareDevCommandEnv(normalizedCommandArgs, proxyEnv),
 		stdio,
+		detached: process.platform !== "win32",
 	});
 
 	return {
@@ -280,6 +299,7 @@ export async function startDevProxyDevCommand({
 		cwd: config.root,
 		env: devEnv,
 		stdio,
+		detached: process.platform !== "win32",
 	});
 
 	return {
@@ -436,6 +456,7 @@ export function startDevProxyAppRuntimeCommand({
 		cwd,
 		env: childEnv,
 		stdio,
+		detached: process.platform !== "win32",
 	});
 
 	return createSingleChildRuntime(child);
@@ -762,7 +783,11 @@ function spawnWithFallback(
 	return new Promise((resolve, reject) => {
 		const tryCommand = (index: number) => {
 			const [command, args, commandOptions = {}] = commands[index];
-			const child = spawn(command, args, { ...options, ...commandOptions });
+			const child = spawn(command, args, {
+				detached: process.platform !== "win32",
+				...options,
+				...commandOptions,
+			});
 			let spawned = false;
 
 			child.once("spawn", () => {
@@ -783,33 +808,38 @@ function spawnWithFallback(
 	});
 }
 
-function createSingleChildRuntime(child: ChildProcess): DevProxyProcessRuntime {
-	let settled = false;
-	let resolveExit!: (result: ProcessExitResult) => void;
-	const exit = new Promise<ProcessExitResult>((resolve) => {
-		resolveExit = resolve;
-	});
+export function createSingleChildRuntime(child: ChildProcess): DevProxyProcessRuntime {
+	let shuttingDown = false;
+	let escalationTimer: NodeJS.Timeout | undefined;
 
-	child.on("exit", (code, signal) => {
-		if (settled) {
-			return;
-		}
-		settled = true;
-		resolveExit(toExitResult(code, signal));
+	const exit = new Promise<ProcessExitResult>((resolve) => {
+		child.once("exit", (code, signal) => {
+			if (escalationTimer) clearTimeout(escalationTimer);
+			resolve(toExitResult(code, signal));
+		});
 	});
 
 	return {
 		child,
 		stop(signal = "SIGTERM") {
-			if (!child.killed) {
-				child.kill(signal);
+			if (shuttingDown) {
+				if (escalationTimer) clearTimeout(escalationTimer);
+				killProcessGroup(child, "SIGKILL");
+				return;
 			}
+			shuttingDown = true;
+			killProcessGroup(child, signal);
+			escalationTimer = setTimeout(
+				() => killProcessGroup(child, "SIGKILL"),
+				SHUTDOWN_GRACE_MS,
+			);
+			escalationTimer.unref();
 		},
 		exit,
 	};
 }
 
-function createLinkedRuntime(
+export function createLinkedRuntime(
 	child: ChildProcess,
 	auxiliary: ChildProcess | undefined | Array<ChildProcess | undefined>,
 ): DevProxyProcessRuntime {
@@ -817,57 +847,63 @@ function createLinkedRuntime(
 		(value): value is ChildProcess => Boolean(value),
 	);
 	const proxy = auxiliaries[0];
-	let settled = false;
+
 	let shuttingDown = false;
-	let resolveExit!: (result: ProcessExitResult) => void;
-	const exit = new Promise<ProcessExitResult>((resolve) => {
-		resolveExit = resolve;
-	});
-	const finish = (code: number | null, signal: NodeJS.Signals | null) => {
-		if (settled) {
+	let escalationTimer: NodeJS.Timeout | undefined;
+
+	const childExited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+		(resolve) => child.once("exit", (code, signal) => resolve({ code, signal })),
+	);
+	const auxExited = auxiliaries.map(
+		(aux) =>
+			new Promise<void>((resolve) =>
+				aux.once("exit", () => resolve()),
+			),
+	);
+
+	const broadcast = (signal: NodeJS.Signals) => {
+		killProcessGroup(child, signal);
+		for (const aux of auxiliaries) killProcessGroup(aux, signal);
+	};
+
+	const beginShutdown = (signal: NodeJS.Signals) => {
+		if (shuttingDown) {
+			if (escalationTimer) clearTimeout(escalationTimer);
+			broadcast("SIGKILL");
 			return;
 		}
-		settled = true;
-		resolveExit(toExitResult(code, signal));
-	};
-	const stopAuxiliaries = (signal: NodeJS.Signals) => {
-		for (const process of auxiliaries) {
-			if (!process.killed) {
-				process.kill(signal);
-			}
-		}
+		shuttingDown = true;
+		broadcast(signal);
+		escalationTimer = setTimeout(() => broadcast("SIGKILL"), SHUTDOWN_GRACE_MS);
+		escalationTimer.unref();
 	};
 
-	for (const process of auxiliaries) {
-		process.on("exit", (code, signal) => {
-			if (shuttingDown) {
-				return;
-			}
-
-			shuttingDown = true;
-			if (!child.killed) {
-				child.kill("SIGTERM");
-			}
-			finish(code ?? 1, signal);
+	for (const aux of auxiliaries) {
+		aux.once("exit", () => {
+			if (shuttingDown) return;
+			beginShutdown("SIGTERM");
 		});
 	}
 
-	child.on("exit", (code, signal) => {
-		shuttingDown = true;
-		stopAuxiliaries("SIGTERM");
-		finish(code, signal);
-	});
+	const exit = (async () => {
+		const { code, signal } = await childExited;
+		if (!shuttingDown) beginShutdown("SIGTERM");
+		await Promise.race([
+			Promise.all(auxExited),
+			new Promise<void>((resolve) => {
+				setTimeout(resolve, SHUTDOWN_GRACE_MS).unref();
+			}),
+		]);
+		if (escalationTimer) clearTimeout(escalationTimer);
+		return toExitResult(code, signal);
+	})();
 
 	return {
 		child,
 		proxy,
 		auxiliaries,
 		stop(signal = "SIGTERM") {
-			shuttingDown = true;
-			if (!child.killed) {
-				child.kill(signal);
-			}
-			stopAuxiliaries(signal);
+			beginShutdown(signal);
 		},
 		exit,
 	};

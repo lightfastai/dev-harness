@@ -583,17 +583,26 @@ async function waitForRuntime(
 	runtime: DevProxyProcessRuntime,
 	onStop?: () => void,
 ): Promise<void> {
-	const shutdown = (signal: NodeJS.Signals) => {
+	let pressed = false;
+	let onStopCalled = false;
+	const callOnStop = () => {
+		if (onStopCalled) return;
+		onStopCalled = true;
 		onStop?.();
-		runtime.stop(signal);
 	};
-
+	const shutdown = (signal: NodeJS.Signals) => {
+		callOnStop();
+		runtime.stop(signal);
+		if (pressed) {
+			console.error(`\n[lightfast-dev] received ${signal} twice — force killing.`);
+		}
+		pressed = true;
+	};
 	for (const signal of SIGNALS) {
-		process.once(signal, () => shutdown(signal));
+		process.on(signal, () => shutdown(signal));
 	}
-
 	const result = await runtime.exit;
-	onStop?.();
+	callOnStop();
 	process.exit(result.exitCode);
 }
 
