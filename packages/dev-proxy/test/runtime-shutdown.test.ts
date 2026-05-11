@@ -47,6 +47,24 @@ const pidAlive = (pid: number) => {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Poll until `process.kill(-pgid, 0)` throws ESRCH (the process group is empty).
+// On Linux, group members can outlive the leader's exit event by tens of ms
+// while the kernel reaps them; darwin coalesces faster. Up to `timeoutMs`.
+const waitForGroupReaped = async (pgid: number, timeoutMs = 2000) => {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		try {
+			process.kill(-pgid, 0);
+		} catch {
+			return;
+		}
+		if (Date.now() >= deadline) {
+			throw new Error(`process group ${pgid} still has live members after ${timeoutMs}ms`);
+		}
+		await wait(25);
+	}
+};
+
 test("waits for the main child even when an auxiliary exits first", { timeout: 10_000 }, async () => {
 	// Main ignores SIGTERM, so when aux's exit triggers crash-recovery shutdown
 	// (Phase 1 §3), main survives long enough for us to observe that
@@ -85,8 +103,10 @@ test("kills the entire process group on stop()", { timeout: 10_000 }, async () =
 	await runtime.exit;
 	assert.equal(pidAlive(main.pid!), false);
 
-	// Group is gone — process.kill(-pgid, 0) should ESRCH.
-	assert.throws(() => process.kill(-main.pid!, 0), /ESRCH/);
+	// Grandchildren are also in the group and received SIGTERM. They exit
+	// asynchronously; on Linux the OS may not have reaped them by the time
+	// `runtime.exit` resolves (which only awaits the main child).
+	await waitForGroupReaped(main.pid!);
 });
 
 test(
